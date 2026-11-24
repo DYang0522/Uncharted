@@ -13,6 +13,40 @@ uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *n
     return 0;
 }
 
+/* The pad test exercises SDL input in isolation, without the game renderer or settings menu. */
+void runtime_uc2mp_diag(Uc2mpDiagSite site, const void *return_address) {
+    (void)site; (void)return_address;
+}
+void runtime_gamesettings_tick(void) {}
+void runtime_mouselook_trace_pad(int direct, float stick_x, float stick_y) {
+    (void)direct; (void)stick_x; (void)stick_y;
+}
+int gow3gpu_window_foreground(void) { return 1; }
+unsigned gow3gpu_controls_generation(void) { return 1; }
+void gow3gpu_controls_get(Gow3Controls *out) {
+    memset(out, 0, sizeof(*out));
+    out->prompts = -1;
+    out->mouse_sens = 1.0f;
+    out->stick_speed = 1.0f;
+}
+void gow3gpu_prompts_set_labels(int set, const char *const *labels, int count) {
+    (void)set; (void)labels; (void)count;
+}
+void gow3gpu_prompts_set_device(int device) { (void)device; }
+float gow3gpu_controls_mouse_aim_sens(void) { return 1.0f; }
+float gow3gpu_controls_mouse_vertical(void) { return 1.0f; }
+int gow3gpu_controls_mouse_invert_x(void) { return 0; }
+int gow3gpu_mouse_take(float *dx, float *dy, unsigned *buttons) {
+    if (dx) *dx = 0.0f;
+    if (dy) *dy = 0.0f;
+    if (buttons) *buttons = 0;
+    return 0;
+}
+unsigned gow3gpu_mouse_look_calls(void) { return 0; }
+void gow3gpu_mouse_look_pause(int paused) { (void)paused; }
+void gow3gpu_mouse_inject(float dx, float dy) { (void)dx; (void)dy; }
+void gow3gpu_thumbnail_pause(void) {}
+
 static void inject(const char *path, const char *tokens) {
     FILE *f=fopen(path,"w");
     assert(f);
