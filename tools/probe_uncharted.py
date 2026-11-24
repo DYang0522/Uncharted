@@ -2059,6 +2059,10 @@ def main():
     parser.add_argument("--capture", action="store_true", help="Request a renderer frame dump every three seconds")
     parser.add_argument("--seconds", type=int, default=30, help="External process time limit; 0 disables it")
     args = parser.parse_args()
+    if args.game.exists():
+        title_id = sfo_value(args.game.resolve(), "TITLE_ID")
+        if title_id != "CUSA01399":
+            parser.error(f"--game must point to the Asian CUSA01399 (PCAS-02021) dump; found {title_id or 'an unknown title ID'}")
     if args.runtime_executable:
         args.runtime_executable = args.runtime_executable.resolve()
         if not args.runtime_executable.is_file():
