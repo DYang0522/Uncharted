@@ -105,7 +105,7 @@ def kinds_for(names):
 if __name__ == '__main__':
     have = present()
     if have is None:
-        print('Could not identify the CPU (set TLOU_ISA_REWRITE=force to emulate the instructions anyway).')
+        print('Could not identify the CPU (set UNCHARTED_ISA_REWRITE=force to emulate the instructions anyway).')
     else:
         print('CPU has:    ', ', '.join(sorted(have)) or '-')
         print('Emulated:   ', ', '.join(missing_emulatable()) or 'nothing (the CPU has them all)')
