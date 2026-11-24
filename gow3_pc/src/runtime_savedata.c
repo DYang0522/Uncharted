@@ -179,7 +179,7 @@ static void commit(const char *host, const char *backup) {
     make_dirs(backup);
     for (struct dirent *e; (e=readdir(d));) {
         if (e->d_name[0]=='.') continue;
-        char src[720], dst[720];
+        char src[1024], dst[1024];
         snprintf(src,sizeof(src),"%s/%s",host,e->d_name);
         struct stat st;
         if (stat(src,&st) || !S_ISREG(st.st_mode)) continue;
@@ -202,7 +202,7 @@ static void repair(const char *host, const char *backup, const char *name) {
     for (struct dirent *e; (e=readdir(d));) {
         size_t n=strlen(e->d_name);
         if (e->d_name[0]=='.' || (n>4 && !strcmp(e->d_name+n-4,".tmp"))) continue;
-        char src[720], dst[720];
+        char src[1024], dst[1024];
         snprintf(src,sizeof(src),"%s/%s",backup,e->d_name);
         snprintf(dst,sizeof(dst),"%s/%s",host,e->d_name);
         size_t size=0;
