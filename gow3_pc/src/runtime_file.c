@@ -150,14 +150,14 @@ static const OverlayEntry *overlay_find(const Overlay *o,const char *key) {
     return bsearch(&probe,o->entries,o->count,sizeof(*o->entries),overlay_compare);
 }
 static void overlay_index(Overlay *o,const char *rel) {
-    char path[1100];
+    char path[1536];
     snprintf(path,sizeof(path),"%s%s%s",o->root,*rel ? "/" : "",rel);
     DIR *d=opendir(path);
     if (!d) return;
     struct dirent *e;
     while ((e=readdir(d))) {
         if (!strcmp(e->d_name,".") || !strcmp(e->d_name,"..")) continue;
-        char child[1024], host[1100], key[1024];
+        char child[1024], host[1536], key[1024];
         HostStat s;
         if ((size_t)snprintf(child,sizeof(child),"%s%s%s",rel,*rel ? "/" : "",e->d_name)>=sizeof(child)) continue;
         snprintf(host,sizeof(host),"%s/%s",o->root,child);
@@ -305,7 +305,7 @@ static void merge_listing(Listing *l,const char *path) {
     free_listing(other);
 }
 static void merge_layers(const char *guest,const char *chosen,Listing *l) {
-    char base[1024], key[1024], layer[1100];
+    char base[1024], key[1024], layer[1536];
     if (!overlay_count || resolve(guest,base,sizeof(base),1)) return;
     if (strcmp(base,chosen)) merge_listing(l,base);
     const char *rest=guest; /* relative guest paths are under /app0 */
