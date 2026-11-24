@@ -2,9 +2,9 @@
 with the list of every file of the Collection's base game (names and sizes only, no game data).
   check_game_files.py check <game folder>      prints the missing / wrong-size files, exit 1 if any
   check_game_files.py make <base uroot> [<other region's base uroot> ...]   writes the list
-The list holds the files every region's base game has (the EU CUSA02344 and US CUSA02320 copies
-agree); a size is checked only where all regions agree and update 1.02 does not replace the file
-(players may copy the update into the game folder). sce_sys (region metadata) is left out.
+The bundled list was generated from the EU CUSA02344 and US CUSA02320 base games. It is not an
+Asian CUSA01399 file manifest and must not be used to certify an Asian dump. A size is checked
+only where both source regions agree and update 1.02 does not replace the file. sce_sys is left out.
 Why: Uncharted 3 chapter 8 stopped for players whose dump lacked
 u3data/build/main/dc1/ps4/ss-syria/ss-area2-breakable-buildings-controller-1.bin (#247, #296)."""
 import gzip
