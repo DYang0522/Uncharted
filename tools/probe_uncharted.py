@@ -2041,7 +2041,7 @@ def run_game(args, game, executable, guest_args, loadexec, app0=None, overlays=(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--game", type=Path, default=ROOT / "game/CUSA02344/uroot")
+    parser.add_argument("--game", type=Path, default=ROOT / "game/CUSA01399/uroot")
     parser.add_argument("--analysis-root", type=Path,
                         help="Separate build/log directory for isolated experiments")
     parser.add_argument("--user-dir", type=Path,
