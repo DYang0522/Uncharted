@@ -2,8 +2,13 @@
 #include "runtime.h"
 #include <stdlib.h>
 
-/* The settings menu of the GPU library restarts through probe.c, which tests do not link. */
+/* Probe-only services: semaphore tests exercise runtime logic without guest-code patches. */
 void runtime_restart(void) { abort(); }
+void runtime_exec_watch_retarget(uint64_t address) { (void)address; }
+unsigned char *runtime_near_image_alloc(size_t bytes, int executable) {
+    (void)bytes; (void)executable;
+    return NULL;
+}
 #include <assert.h>
 #include <pthread.h>
 #include <stdint.h>
