@@ -319,8 +319,17 @@ static void merge_layers(const char *guest,const char *chosen,Listing *l) {
     for (size_t i=0;i<overlay_count;++i) {
         const OverlayEntry *e=n ? overlay_find(&overlays[i],key) : NULL;
         if (n && (!e || !e->dir)) continue;
-        if (n) snprintf(layer,sizeof(layer),"%s/%s",overlays[i].root,e->rel);
-        else snprintf(layer,sizeof(layer),"%s",overlays[i].root);
+        const size_t root_len = strlen(overlays[i].root);
+        if (n) {
+            const size_t rel_len = strlen(e->rel);
+            if (root_len + 1 + rel_len >= sizeof(layer)) continue;
+            memcpy(layer, overlays[i].root, root_len);
+            layer[root_len] = '/';
+            memcpy(layer + root_len + 1, e->rel, rel_len + 1);
+        } else {
+            if (root_len >= sizeof(layer)) continue;
+            memcpy(layer, overlays[i].root, root_len + 1);
+        }
         if (strcmp(layer,chosen)) merge_listing(l,layer);
     }
 }
