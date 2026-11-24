@@ -1,6 +1,6 @@
 # Uncharted: The Nathan Drake Collection — PC port
 
-Run the PS4 **Uncharted: The Nathan Drake Collection** (CUSA02344: *Drake's Fortune*, *Among
+Run the Asian PS4 **Uncharted: The Nathan Drake Collection** (PCAS-02021 / CUSA01399: *Drake's Fortune*, *Among
 Thieves* and *Drake's Deception*) natively on Windows or Linux. The game's own x86-64 code runs
 directly on the PC; a runtime supplies the PS4 system libraries, and a Vulkan renderer executes
 the PS4 GPU work.
@@ -10,7 +10,7 @@ By **BilalReloaded** ([YouTube](https://www.youtube.com/@BilalReloaded/videos),
 [CHANGELOG.md](CHANGELOG.md).
 
 > **No game files are in this repository or its builds.** You need your own copy of the game
-> (the dumped CUSA02344 folder). This project is not affiliated with Sony, Naughty Dog or
+> (the decrypted, dumped Asian CUSA01399 folder). This project is not affiliated with Sony, Naughty Dog or
 > Bluepoint Games.
 
 ## Status
@@ -134,10 +134,10 @@ controller buttons).
    [Releases](../../releases) page (or a newer build from the
    [Actions](../../actions/workflows/build-windows.yml) tab, latest successful run → Artifacts),
    or build it yourself (below). Extract it anywhere.
-2. Start **Uncharted Launcher.exe**. On the first Play, select your game folder: the dumped
-   `CUSA02344` folder (the one holding `eboot.bin` and `sce_sys`, often called `uroot`).
-3. **Recommended: update 1.02** (Bluepoint's stability, movie, audio and gameplay fixes). Extract
-   the update next to the game folder, named like it plus `-patch` (for example `CUSA02344-patch`,
+2. Start **Uncharted Launcher.exe**. On the first Play, select your Asian game folder: the dumped
+   `CUSA01399` folder (the one holding `eboot.bin` and `sce_sys`, often called `uroot`).
+3. **Recommended: update 1.02 for CUSA01399** (Bluepoint's stability, movie, audio and gameplay fixes). Extract
+   the update next to the game folder, named like it plus `-patch` (for example `CUSA01399-patch`,
    with or without its `uroot` folder). The launcher's Advanced tab shows the version in use.
 4. Pick a game and a preset, press **PLAY**. The first start of each game prepares files and
    compiles shaders: expect a slow first load and some stutter until the cache has filled.
@@ -221,3 +221,6 @@ license notices and publish your source code under the same license when you dis
 build. Beyond that, a request: **credit this project and link back to it**
 (`https://github.com/bc160201983/Uncharted-The-Nathan-Drake-Collection-PC-port`, by BilalReloaded) in your README or release
 notes, so people can find where a fix came from.
+
+
+**Asian edition requirement:** this branch targets the Asian release `PCAS-02021` (`CUSA01399`), which contains Chinese and Korean language resources. Other regional title IDs are not accepted by the launcher. The existing game-code patches and the EU/US-derived optional file-completeness list have not yet been validated against the Asian executables; successful compilation alone does not establish Asian-game runtime compatibility.
