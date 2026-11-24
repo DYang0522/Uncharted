@@ -119,7 +119,7 @@ jobs:
         run: |
           test -x "$APPIMAGETOOL"
           test -x "$PYTHON_STANDALONE/bin/python3"
-          tools/appimage/build_appimage.sh
+          bash tools/appimage/build_appimage.sh
           cd dist
           sha256sum ./*.AppImage > SHA256SUMS
           file ./*.AppImage
