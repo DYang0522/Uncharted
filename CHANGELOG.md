@@ -4,6 +4,16 @@ Uncharted: The Nathan Drake Collection PC port, by **BilalReloaded**
 ([YouTube](https://www.youtube.com/@BilalReloaded/videos), [GitHub](https://github.com/bc160201983)).
 Technical details of every item: [analysis/STATUS.md](analysis/STATUS.md).
 
+## 25 November 2026 (Linux compatibility)
+
+- **Sandy Bridge / Ivy Bridge guest ISA compatibility on Linux:** the launcher detects missing
+  BMI1, LZCNT, MOVBE and F16C and rewrites those guest instructions before starting the game.
+  It does not emulate each instruction through SIGILL. AVX, SSE4.2 and POPCNT remain required.
+  The Linux AppImage bundles iced-x86 for the rewrite-table analyzer.
+- **FP32 shader fallback:** half-float ALU conversions now use FP32 pack/unpack operations when
+  Vulkan does not expose shaderFloat16. FSR EASU/RCAS also has FP32 host-shader variants selected
+  from the device feature, avoiding FP16 shader arithmetic on older AMD GPUs.
+
 ## 6 November 2026, afternoon (0.8.4)
 
 - **PS4 LDS bounds** (Uncharted 3 chapter 2 "device lost" as young Sully appears: #295 #138 #342

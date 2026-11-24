@@ -9,7 +9,7 @@ Tested on Bazzite (Fedora-based) with a Ryzen 7800X3D and an RTX 5070 Ti: Among 
 the right speed; Drake's Deception boots and reaches the menus. Linux has had less testing than
 Windows; reports welcome.
 
-## What the AppImage does at start
+The AppImage also bundles `iced-x86` for the Linux Sandy/Ivy Bridge guest-instruction rewrite.\n\n## What the AppImage does at start
 
 The AppImage is read-only, but the launcher and runtime write next to themselves (`analysis/`).
 `AppRun` copies the program files once per version to `~/.local/share/uncharted-ndc/app`
@@ -21,6 +21,14 @@ cache under `analysis/` are never overwritten. The launcher's self-update is off
 - `./Uncharted-NDC-…AppImage --boot <game folder>` starts a game without it.
 
 ## Building (Ubuntu 24.04 was used)
+
+For a source-tree launch on an older CPU, install the ISA rewrite analyzer once:
+
+```bash
+python3 -m pip install --target gow3_pc/out/pydeps iced-x86==1.21.0
+```
+
+The AppImage build installs this dependency into its bundled Python automatically.
 
 1. The Linux branch of `gow3_pc/build.sh` needs, beyond its package list: GCC 14 (`deducing this`),
    current Vulkan-Headers and VulkanMemoryAllocator (newer than Ubuntu's), and SDL3 built from

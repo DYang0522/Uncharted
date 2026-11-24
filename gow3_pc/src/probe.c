@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include "runtime.h"
 #include "cpu_check.h"
+#include "red_zone.h"
 #include "orb_hook.h"
 #include "cheat_hook.h"
 #include "actor_hook.h"
@@ -45,6 +46,7 @@ static LinkedModule modules[16];
 static uint64_t module_count;
 static int entered_game;
 static int gpu_enabled;
+static RedZoneTable *red_zone;
 int vulkan_smoke(void);
 /* runtime_redzone.c: guest leaf functions' red zones kept clear of exception frames. */
 uint64_t runtime_redzone_install(unsigned char *image, uint64_t size, const uint64_t *segments, uint64_t count);
@@ -1255,7 +1257,7 @@ int main(int argc, char **argv) {
     const char *guest_argv[17]={"/app0/eboot.bin"};
     int guest_argc=1;
     unsigned timeout_seconds = 0; /* no limit by default, as on Windows; --timeout N for tests */
-    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL;
+    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *red_zone_file=NULL;
     const char *app0_overlays[4]; int app0_overlay_count=0;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--cpu-only")) cpu_only = 1;
@@ -1272,6 +1274,7 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--user") && i+1<argc) user_dir=argv[++i];
         else if (!strcmp(argv[i], "--patches") && i+1<argc) patch_file=argv[++i];
+        else if (!strcmp(argv[i], "--red-zone") && i+1<argc) red_zone_file=argv[++i];
         else if (!strcmp(argv[i], "--timeout") && i+1<argc) timeout_seconds=(unsigned)strtoul(argv[++i],NULL,10);
         else if (!strcmp(argv[i], "--guest-path") && i+1<argc) guest_argv[0]=argv[++i];
         else if (!strcmp(argv[i], "--guest-arg") && i+1<argc) {
@@ -1281,7 +1284,7 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--validate-uc2mp] [--no-game-hooks] [--content-profile file] [--app0 dir] [--app0-overlay dir]... [--user dir] [--patches file] [--timeout seconds] [--guest-path /app0/file] [--guest-arg value]... | --vulkan-only\n", argv[0]);
+        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--validate-uc2mp] [--no-game-hooks] [--content-profile file] [--app0 dir] [--app0-overlay dir]... [--user dir] [--patches file] [--red-zone table] [--timeout seconds] [--guest-path /app0/file] [--guest-arg value]... | --vulkan-only\n", argv[0]);
         return 1;
     }
     /* The guest code needs the PS4's instruction sets (#33, #66); GOW3_CPU_CHECK=0 skips this.
@@ -1457,10 +1460,21 @@ int main(int argc, char **argv) {
             if (!executable) fail("native function is not executable");
         }
     }
-    image = low_image ? allocate_low_image(round_page(size)) : allocate(round_page(size));
+    /* The Linux table contains ISA replacements only; generate it from the exact linked image. */
+    if (red_zone_file) {
+        red_zone = red_zone_load(red_zone_file);
+        if (!red_zone) fail("cannot load guest ISA rewrite table");
+        if (red_zone->rz_code_offset != round_page(size))
+            fail("guest ISA rewrite table has the wrong stub offset for this image");
+    }
+    const size_t red_zone_area = red_zone ? round_page(red_zone_code_size(red_zone)) : 0;
+    const size_t image_area = round_page(size) + red_zone_area;
+    image = low_image ? allocate_low_image(image_area) : allocate(image_area);
     printf("Guest image base: %p (%s)\n",image,low_image ? "below 2 GiB" : "default range");
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
     fclose(f);
+    if (red_zone && !red_zone_matches(red_zone, image, size))
+        fail("guest ISA rewrite table does not match the linked image");
     if (!cpu_only) {
         char title[128]="Uncharted: The Nathan Drake Collection", serial[16]="UNKNOWN", sfo[4096];
         uint32_t attributes=0;
@@ -1570,6 +1584,11 @@ int main(int argc, char **argv) {
         free(triples);
     }
 #endif
+    if (red_zone) {
+        const RedZoneReport report = red_zone_apply(red_zone, image, image + round_page(size));
+        printf("Guest ISA rewrite: %u patch groups applied, %u skipped\n", report.groups, report.skipped);
+        protect(image + round_page(size), red_zone_area, 5);
+    }
     protect(traps, round_page((import_count + 1) * 32), 5);
     protect(image, round_page(size), 0);
     int executable_entry = 0;

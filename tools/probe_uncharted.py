@@ -1569,7 +1569,40 @@ def run_game(args, game, executable, guest_args, loadexec, app0=None, overlays=(
         image.write_bytes(data)
     else:
         extra_mib = 0
+    # Linux: replace unsupported guest ISA instructions before entering guest code.
+    # Generate after all binary/resolution patches so the table hash matches the mapped image.
+    isa_mode = os.environ.get("UNCHARTED_ISA_REWRITE", "auto").lower()
+    if isa_mode not in ("auto", "force", "off"):
+        raise SystemExit("UNCHARTED_ISA_REWRITE must be auto, force or off")
+    rewrite_table = None
+    isa_skip_cpu_check = False
+    isa_names = []
+    if os.name != "nt" and isa_mode != "off":
+        sys.path.insert(0, str(ROOT / "gow3_pc/out/pydeps"))
+        sys.path.insert(0, str(scripts))
+        import cpu_features
+        if isa_mode == "force":
+            isa_names = list(cpu_features.FEATURE_KINDS)
+        else:
+            isa_names = cpu_features.missing_emulatable() or []
+        if isa_names:
+            rewrite_command = [
+                sys.executable, str(scripts / "red_zone_table.py"), str(out / "boot-linked.bin"),
+                "--out", str(out), "--isa", isa_mode, "--isa-only",
+            ]
+            rewrite_result = subprocess.run(rewrite_command)
+            if rewrite_result.returncode != 0:
+                raise SystemExit(
+                    "Cannot make the Linux guest ISA rewrite table. Install iced-x86 with "
+                    "python3 -m pip install --target gow3_pc/out/pydeps iced-x86==1.21.0 "
+                    "and retry; no game code was started."
+                )
+            rewrite_table = out / "red-zone.bin"
+            isa_skip_cpu_check = not cpu_features.missing_blocking()
+            print("Linux ISA compatibility: rewritten " + ", ".join(isa_names))
     env = os.environ.copy()
+    if rewrite_table is not None and isa_skip_cpu_check:
+        env["GOW3_CPU_CHECK"] = "0"
     wanted = cheat_names(executable)
     rewards = os.environ.get("UNCHARTED_UNLOCK_REWARDS", "0") == "1"
     quality = [name for name in ("hires_shadows", "full_res_textures", "no_dof", "no_motion_blur")
@@ -1910,6 +1943,8 @@ def run_game(args, game, executable, guest_args, loadexec, app0=None, overlays=(
     command = [str(args.runtime_executable or game_executable()), str(out / "boot-linked.bin"),
                "--no-game-hooks", "--low-image", "--content-profile", str(out / "content.bin"),
                "--app0", str(app0 or game), "--user", str(user)]
+    if rewrite_table is not None:
+        command += ["--red-zone", str(rewrite_table)]
     # gow3 24 Oct 2026, co-op research: UNCHARTED_COOP_OVERLAY=<dir> lays one more folder over
     # /app0, ahead of the others (e.g. a U2 package manifest without the missing co-op skins,
     # analysis/triage-1022/coop-work/make_coop_overlay.py). Off unless set.

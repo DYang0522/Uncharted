@@ -1,11 +1,14 @@
 //  SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 //  SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <span>
 #include "gow3_graphics.h"
 #include "common/assert.h"
 #include "core/emulator_settings.h"
 #include "video_core/host_shaders/fsr_easu_comp.h"
 #include "video_core/host_shaders/fsr_rcas_comp.h"
+#include "video_core/host_shaders/fsr_easu_f32_comp.h"
+#include "video_core/host_shaders/fsr_rcas_f32_comp.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -27,7 +30,7 @@ struct FSRConstants {
 
 namespace Vulkan::HostPasses {
 
-void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) {
+void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images, bool use_fp16) {
     this->device = device;
     this->num_images = num_images;
 
@@ -78,11 +81,15 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
         .size = sizeof(FSRConstants),
     };
 
-    const auto& cs_easu_module = CompileSPV(FSR_EASU_COMP, device);
+    const std::span<const u32> easu_code = use_fp16 ? std::span<const u32>{FSR_EASU_COMP}
+                                                       : std::span<const u32>{FSR_EASU_F32_COMP};
+    const std::span<const u32> rcas_code = use_fp16 ? std::span<const u32>{FSR_RCAS_COMP}
+                                                       : std::span<const u32>{FSR_RCAS_F32_COMP};
+    const auto& cs_easu_module = CompileSPV(easu_code, device);
     ASSERT(cs_easu_module);
     SetObjectName(device, cs_easu_module, "fsr.comp [EASU]");
 
-    const auto& cs_rcas_module = CompileSPV(FSR_RCAS_COMP, device);
+    const auto& cs_rcas_module = CompileSPV(rcas_code, device);
     ASSERT(cs_rcas_module);
     SetObjectName(device, cs_rcas_module, "fsr.comp [RCAS]");
 

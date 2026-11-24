@@ -1,9 +1,9 @@
 # Uncharted: The Nathan Drake Collection — PC port
 
 Run the PS4 **Uncharted: The Nathan Drake Collection** (CUSA02344: *Drake's Fortune*, *Among
-Thieves* and *Drake's Deception*) natively on Windows. The game's own x86-64 code runs directly
-on the PC; a runtime supplies the PS4 system libraries, and a Vulkan renderer executes the PS4 GPU
-work.
+Thieves* and *Drake's Deception*) natively on Windows or Linux. The game's own x86-64 code runs
+directly on the PC; a runtime supplies the PS4 system libraries, and a Vulkan renderer executes
+the PS4 GPU work.
 
 By **BilalReloaded** ([YouTube](https://www.youtube.com/@BilalReloaded/videos),
 [GitHub](https://github.com/bc160201983)), October 2026. What changed and when:
@@ -22,15 +22,16 @@ By **BilalReloaded** ([YouTube](https://www.youtube.com/@BilalReloaded/videos),
 | Uncharted 3: Drake's Deception | Yes | Played at 1080p and 1440p, 4K tested: the Cartagena crowd 90 FPS at 4K on an RTX 5080 (frame limit 120). |
 
 The Collection menu, switching between the three games, saves, audio (music, speech, effects),
-cutscene movies and controllers work. Details and open issues: [analysis/STATUS.md](analysis/STATUS.md);
+cutscene movies, controllers and keyboard/mouse work. Linux builds also include low-video-memory
+mode and FP32 shader variants for Vulkan devices without shaderFloat16. Details and open issues: [analysis/STATUS.md](analysis/STATUS.md);
 plan and test list: [analysis/PLAN.md](analysis/PLAN.md).
 
 ## System requirements and the lowest PC that plays
 
-- **Needs:** Windows 10 or 11 (64-bit); a CPU from **Intel's 4th-generation Core (Haswell, 2013)
-  or newer, or any AMD Ryzen** (the games need AVX, F16C, BMI1, MOVBE and LZCNT); a graphics card
-  or integrated GPU with **Vulkan 1.3** and a current driver; about **6 GB of free RAM** for the
-  game (16 GB in the PC recommended).
+- **Needs:** Windows 10/11 or 64-bit Linux; a CPU with **AVX, SSE4.2 and POPCNT**. The Linux
+  launcher rewrites missing **F16C, BMI1, MOVBE and LZCNT** instructions before the game starts,
+  including on Intel Sandy Bridge (2nd-generation Core, such as the i7-2700K). A graphics card
+  with **Vulkan 1.3** and a current driver; 16 GB RAM recommended.
 - **Weakest GPU tested: the integrated AMD Radeon graphics of a Ryzen 7000/9000 desktop CPU**
   (2 compute units, about a quarter of a PS4's GPU). At **720p**: Uncharted 3 27-39 FPS,
   Uncharted 2 27 FPS, Drake's Fortune 24 FPS; at **540p** Uncharted 3 33 FPS. Playable, not

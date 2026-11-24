@@ -365,6 +365,8 @@ private:
     template <typename T = IR::U64>
     [[nodiscard]] T GetSrc64(const InstOperand& operand);
     [[nodiscard]] IR::F32 GetSrcMix(const InstOperand& operand);
+    // Pack an FP32 value as guest FP16 bits without requiring shaderFloat16.
+    IR::U32 F32ToF16Bits(const IR::F32& value);
     template <typename T = IR::U32, bool is_signed = false>
     [[nodiscard]] pk_type<T> GetSrcPk(const InstOperand& operand);
     void SetDst(const InstOperand& operand, const IR::U32F32& value);

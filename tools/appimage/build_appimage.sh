@@ -10,7 +10,7 @@ PYSRC=${PYTHON_STANDALONE:?set PYTHON_STANDALONE to a python-build-standalone fo
 APPDIR=$ROOT/dist/Uncharted.AppDir
 rm -rf "$APPDIR"
 APP=$APPDIR/usr/share/uncharted/app
-mkdir -p "$APP"/{gow3_pc/out/gpu,gow3_pc/scripts,tools,launcher/assets,analysis/uncharted-user} "$APPDIR/usr/lib"
+mkdir -p "$APP"/{gow3_pc/out/gpu,gow3_pc/out/pydeps,gow3_pc/scripts,tools,launcher/assets,analysis/uncharted-user} "$APPDIR/usr/lib"
 
 # Program files (as tools/package_windows.sh, without the Windows-only parts).
 cp gow3_pc/out/gow3-probe gow3_pc/out/gow3-gpu-capabilities "$APP/gow3_pc/out/"
@@ -45,6 +45,7 @@ LD_LIBRARY_PATH=/usr/local/lib copy_deps "$APP/gow3_pc/out/gpu/libgow3gpu.so"
 cp -a "$PYSRC" "$APPDIR/usr/python"
 rm -f "$APPDIR"/usr/python/lib/python3*/EXTERNALLY-MANAGED
 "$APPDIR/usr/python/bin/python3" -m pip install --quiet --no-warn-script-location Pillow
+"$APPDIR/usr/python/bin/python3" -m pip install --quiet --no-warn-script-location --target "$APP/gow3_pc/out/pydeps" iced-x86==1.21.0
 rm -rf "$APPDIR/usr/python/lib/python3"*/test "$APPDIR/usr/python/lib/python3"*/idlelib \
        "$APPDIR/usr/python/include"
 find "$APPDIR/usr/python" -name __pycache__ -prune -exec rm -rf {} +
