@@ -3884,6 +3884,11 @@ class Launcher:
         if not folder:
             messagebox.showwarning(APP_TITLE, "Choose the game folder first.")
             return
+        if game_title_id(folder) == REQUIRED_TITLE_ID:
+            messagebox.showinfo(APP_TITLE, "Asian CUSA01399 detected. The bundled completeness list was built from "
+                                "the EU/US editions, so it cannot reliably verify this Asian dump. No file "
+                                "completeness result is available for this edition yet.")
+            return
         try:
             result = subprocess.run([sys.executable, "-I", str(ROOT / "tools" / "check_game_files.py"), "check",
                                      str(folder)], capture_output=True, text=True, timeout=600,
