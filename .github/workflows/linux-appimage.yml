@@ -73,7 +73,9 @@ jobs:
           GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
           CC: gcc-14
           CXX: g++-14
-        run: bash gow3_pc/build.sh --test
+        run: |
+          mkdir -p "$HOME/.local/share"
+          bash gow3_pc/build.sh --test
 
       - name: Install relocatable Python for the AppImage
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
