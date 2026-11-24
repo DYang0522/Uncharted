@@ -1,0 +1,146 @@
+name: Linux AppImage
+
+on:
+  push:
+    branches: [linux-appimage]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-appimage:
+    runs-on: ubuntu-26.04
+    # GitHub's 26.04 VM can be amd64v3. Build inside the generic amd64 image so
+    # the shipped ELF files remain usable on Sandy Bridge (including the i7-2700K).
+    container:
+      image: ubuntu:26.04
+      options: --user root
+    timeout-minutes: 180
+
+    steps:
+      - name: Prepare container for checkout
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git rsync
+
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Verify generic Ubuntu 26.04 amd64 environment
+        run: |
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 26.04
+          test "$(dpkg --print-architecture)" = amd64
+          if apt-config dump | grep -Eqi 'APT::Architecture-Variants.*amd64v3'; then
+            echo 'Refusing an amd64v3 package environment; this build must target Sandy Bridge.' >&2
+            exit 1
+          fi
+          cat /etc/os-release
+          apt-config dump | grep -i 'Architecture-Variants' || true
+
+      - name: Install native Linux build dependencies
+        run: bash gow3_pc/packaging/linux/ci-deps.sh
+
+      - name: Build Linux runtime
+        env:
+          GOW3_PGO: off
+          GOW3_LTO: "ON"
+          GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
+          CC: gcc-14
+          CXX: g++-14
+        run: |
+          gcc --version
+          g++ --version
+          git config --global core.autocrlf false
+          git config --global --add safe.directory '*'
+          bash gow3_pc/build.sh
+          file gow3_pc/out/gow3-probe
+          file gow3_pc/out/gow3-gpu-capabilities
+          file gow3_pc/out/gpu/libgow3gpu.so
+          ldd gow3_pc/out/gow3-probe | tee "$RUNNER_TEMP/runtime-ldd.txt"
+          ldd gow3_pc/out/gpu/libgow3gpu.so | tee "$RUNNER_TEMP/gpu-ldd.txt"
+          ! grep -q "not found" "$RUNNER_TEMP/runtime-ldd.txt"
+          ! grep -q "not found" "$RUNNER_TEMP/gpu-ldd.txt"
+
+      - name: Run native runtime tests
+        env:
+          GOW3_PGO: off
+          GOW3_LTO: "ON"
+          GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
+          CC: gcc-14
+          CXX: g++-14
+        run: bash gow3_pc/build.sh --test
+
+      - name: Install relocatable Python for the AppImage
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Prepare Python 3.12 with Tk
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+        run: |
+          uv python install 3.12
+          python_dir="$(uv python dir)"
+          python_standalone="$(find "$python_dir" -mindepth 1 -maxdepth 1 -type d -name 'cpython-3.12*' -print -quit)"
+          test -n "$python_standalone"
+          test -x "$python_standalone/bin/python3"
+          "$python_standalone/bin/python3" -c 'import tkinter; print("Tk:", tkinter.TkVersion)'
+          echo "PYTHON_STANDALONE=$python_standalone" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned AppImage tooling
+        run: |
+          set -euo pipefail
+          appimagetool="$RUNNER_TEMP/appimagetool-x86_64.AppImage"
+          runtime="$RUNNER_TEMP/runtime-x86_64"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
+            --output "$appimagetool"
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  $appimagetool" | sha256sum --check
+          chmod +x "$appimagetool"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
+            --output "$runtime"
+          echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  $runtime" | sha256sum --check
+          chmod +x "$runtime"
+          cd "$RUNNER_TEMP"
+          "$appimagetool" --appimage-extract >/dev/null
+          test -x "$RUNNER_TEMP/squashfs-root/AppRun"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/squashfs-root/AppRun" >> "$GITHUB_ENV"
+          echo "APPIMAGE_RUNTIME=$runtime" >> "$GITHUB_ENV"
+
+      - name: Assemble Linux AppImage
+        run: |
+          test -x "$APPIMAGETOOL"
+          test -x "$PYTHON_STANDALONE/bin/python3"
+          tools/appimage/build_appimage.sh
+          cd dist
+          sha256sum ./*.AppImage > SHA256SUMS
+          file ./*.AppImage
+          cat SHA256SUMS
+
+      - name: Upload Linux AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: Uncharted-Linux-AppImage
+          path: |
+            dist/*.AppImage
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Uncharted-Linux-build-logs
+          path: |
+            gow3_pc/out/gpu-build.log
+            ${{ runner.temp }}/runtime-ldd.txt
+            ${{ runner.temp }}/gpu-ldd.txt
+          if-no-files-found: ignore
+          retention-days: 14
