@@ -35,7 +35,8 @@ import updater  # launcher/updater.py: updates from the GitHub releases
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "launcher" / "assets"
-DEFAULT_GAME_DIR = ROOT / "game" / "CUSA02344" / "uroot"
+REQUIRED_TITLE_ID = "CUSA01399"
+DEFAULT_GAME_DIR = ROOT / "game" / REQUIRED_TITLE_ID / "uroot"
 STARTER_EXE = ROOT / "Uncharted Launcher.exe"  # the packaged build's starter (tools/package_windows.py)
 USER_DIR = ROOT / "analysis" / "uncharted-user"
 INI_FILE = USER_DIR / "probe.ini"
@@ -708,10 +709,25 @@ def binding_label(binding):
     return MOUSE_LABELS.get(name, name) if kind == "mouse" else name
 
 
+def game_title_id(folder):
+    """TITLE_ID from the dumped PS4 game's sce_sys/param.sfo."""
+    try:
+        data = (Path(folder) / "sce_sys" / "param.sfo").read_bytes()
+        _, _, keys, values, count = struct.unpack_from("<IIIII", data)
+        for i in range(count):
+            key_at, _, length, _, value_at = struct.unpack_from("<HHIII", data, 20 + i * 16)
+            key = data[keys + key_at:data.index(bytes(1), keys + key_at)].decode("utf-8")
+            if key == "TITLE_ID":
+                return data[values + value_at:values + value_at + length].split(bytes(1), 1)[0].decode("ascii")
+    except (OSError, ValueError, UnicodeError, struct.error):
+        pass
+    return None
+
+
 def is_game_dir(folder):
-    """The Collection's game folder (CUSA02344): eboot.bin and sce_sys/param.sfo."""
+    """The Asian Collection game folder (CUSA01399): eboot.bin and its matching param.sfo."""
     return bool(folder) and (Path(folder) / "eboot.bin").is_file() and \
-        (Path(folder) / "sce_sys" / "param.sfo").is_file()
+        game_title_id(folder) == REQUIRED_TITLE_ID
 
 
 UPDATE_SUFFIXES = ("-patch", "-update", "_patch", "_update")
@@ -719,7 +735,7 @@ UPDATE_SUFFIXES = ("-patch", "-update", "_patch", "_update")
 
 def find_game_dir(folder):
     """The game folder at or under the chosen one: the folder itself, its uroot, or up to three
-    levels below (CUSA02344/uroot, a download folder holding CUSA02344), skipping updates.
+    levels below (CUSA01399/uroot, a download folder holding CUSA01399), skipping updates.
     Returns (folder or None, note): the note explains a near miss, such as names in capitals,
     which Linux treats as other names."""
     folder = Path(folder)
@@ -752,6 +768,11 @@ def find_game_dir(folder):
                 near = f"{eboot} is not a readable file (a broken link?)."
             elif not sfo.is_file():
                 near = f"{sfo} is not a readable file (a broken link?)."
+            else:
+                title_id = game_title_id(current)
+                if title_id != REQUIRED_TITLE_ID:
+                    near = (f"{current} is {title_id or 'an unrecognized title ID'}; "
+                            f"this build requires the Asian edition {REQUIRED_TITLE_ID} (PCAS-02021).")
         if depth < 3:
             for entry in entries:
                 name = entry.name.lower()
@@ -1939,7 +1960,7 @@ class Launcher:
         if not found:
             messagebox.showerror(APP_TITLE, "No eboot.bin and sce_sys/param.sfo were found in that folder "
                                             "or the three levels below it.\n\n" + (note + "\n\n" if note else "")
-                                            + "Choose the game's root folder (CUSA02344).")
+                                            + "Choose the game's root folder (CUSA01399).")
             return False
         folder = str(found)
         self.config["game_dir"] = folder
@@ -3398,7 +3419,7 @@ class Launcher:
             return
         if not is_game_dir(self.game_dir()):
             messagebox.showinfo(APP_TITLE, "Select your Uncharted: The Nathan Drake Collection game folder "
-                                           "(CUSA02344, the folder with eboot.bin and sce_sys).")
+                                           "(CUSA01399, the folder with eboot.bin and sce_sys).")
             if not self.choose_game_dir():
                 return
         if not self.confirm_without_update() or not self.confirm_update_files() or \
