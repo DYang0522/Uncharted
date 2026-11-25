@@ -2,7 +2,7 @@ name: Linux AppImage
 
 on:
   push:
-    branches: [linux-appimage]
+    branches: [linux-appimage, linux-appimage-rel32-4d45fa6]
   workflow_dispatch:
 
 permissions:
