@@ -856,8 +856,28 @@ static unsigned char *allocate_near_image(uint64_t size) {
     }
     return NULL;
 #else
+#if defined(__x86_64__) && defined(MAP_32BIT)
+    /*
+     * The guest image is loaded below 2 GiB (--low-image), but allocate() first uses
+     * runtime_low_map(), whose host allocations start at 32 GiB. A normal mmap(NULL)
+     * therefore puts rel32 hook stubs too far from the game image. MAP_32BIT keeps
+     * this mapping in the low 2 GiB; validate both ends of the image before using it.
+     */
+    if (!image || size < 5 || !page_size) return NULL;
+    void *p = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+    if (p == MAP_FAILED) return NULL;
+    const int64_t from_first = (int64_t)(uintptr_t)p - (int64_t)(uintptr_t)(image + 5);
+    const int64_t from_last = (int64_t)(uintptr_t)p - (int64_t)(uintptr_t)(image + size - 5);
+    if (from_first < INT32_MIN || from_first > INT32_MAX ||
+        from_last < INT32_MIN || from_last > INT32_MAX) {
+        munmap(p, page_size);
+        return NULL;
+    }
+    return p;
+#else
     (void)size;
-    return allocate(page_size);
+    return NULL;
 #endif
 }
 #include "uc2mp_spawn_bridge.h"
