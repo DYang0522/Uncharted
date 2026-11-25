@@ -1055,6 +1055,18 @@ bool PercentRow(const char* label, std::atomic<float>& value, int lo, int hi, co
     return changed;
 }
 
+bool FactorRow(const char* label, std::atomic<float>& value, float lo, float hi, const char* help) {
+    Row(label);
+    float v = value.load();
+    const bool changed = ImGui::SliderFloat("##value", &v, lo, hi, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+    if (changed) {
+        value = std::clamp(v, lo, hi);
+    }
+    Help(help);
+    ImGui::PopID();
+    return changed;
+}
+
 void ControlsTab() {
     auto& s = Gow3Settings::Get();
     if (!control_bindings_loaded) {
@@ -1080,12 +1092,9 @@ void ControlsTab() {
         Help("The mouse turns the camera and presses its buttons' actions. Off: the mouse is left alone.");
         ImGui::PopID();
         ImGui::BeginDisabled(!s.mouse);
-        changed |= PercentRow("Mouse sensitivity", s.mouse_sens, 25, 1000, "How far the camera turns per mouse movement.");
-        changed |= PercentRow("Mouse aim sensitivity", s.mouse_aim_sens, 25, 1000,
-                              "While aiming (the aim button held): the mouse sensitivity times this. Below 100% "
-                              "makes aiming finer.");
-        changed |= PercentRow("Mouse up/down speed", s.mouse_vertical, 25, 300,
-                              "Looking up and down compared with left and right.");
+        changed |= FactorRow("Mouse sensitivity", s.mouse_sens, 0.1f, 10.0f,
+                             "One linear raw-input multiplier for normal camera movement and aiming, both "
+                             "horizontally and vertically.");
         Row("Invert mouse up/down");
         bool invert = s.mouse_invert;
         if (ImGui::Checkbox("##value", &invert)) {

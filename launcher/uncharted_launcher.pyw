@@ -630,15 +630,14 @@ def apply_map(bindings, spec, prefix):
 
 
 def sensitivity_value(text):
-    """A mouse sensitivity as the Sensitivity choice names it (the in-game menu sets any)."""
+    """A free decimal raw-input sensitivity multiplier, clamped to the runtime's 0.1..10 range."""
     try:
         value = float(text)
     except (TypeError, ValueError):
         return "1.0"
-    for option, _ in MOUSE_SENSITIVITIES:
-        if abs(float(option) - value) < 0.005:
-            return option
-    return f"{value:g}"
+    if value != value:  # NaN
+        return "1.0"
+    return f"{min(10.0, max(0.1, value)):g}"
 
 
 def factor_value(text, options):
@@ -1535,6 +1534,31 @@ class Segmented(tk.Frame):
                 item.config(bg=PANEL_HI if selected else PANEL, fg=MUTED)
 
 
+class SensitivityEntry(tk.Frame):
+    """One editable raw-input sensitivity multiplier (0.1x to 10x)."""
+
+    def __init__(self, parent, value, command, font):
+        super().__init__(parent, bg=LINE, padx=1, pady=1, highlightthickness=1, highlightbackground=LINE)
+        self.command = command
+        self.variable = tk.StringVar(value=sensitivity_value(value))
+        self.entry = tk.Entry(self, textvariable=self.variable, width=6, font=font, bg=BG, fg=TEXT,
+                              insertbackground=GOLD, relief="flat", highlightthickness=0, justify="center")
+        self.entry.pack(side="left", padx=8, pady=4)
+        tk.Label(self, text="x", font=font, bg=LINE, fg=MUTED).pack(side="left", padx=(0, 7))
+        self.entry.bind("<FocusIn>", lambda e: self.config(highlightbackground=GOLD))
+        self.entry.bind("<FocusOut>", self.commit)
+        self.entry.bind("<Return>", self.commit)
+
+    def set(self, value):
+        self.variable.set(sensitivity_value(value))
+
+    def commit(self, event=None):
+        value = sensitivity_value(self.variable.get())
+        self.variable.set(value)
+        self.config(highlightbackground=LINE)
+        self.command(value)
+
+
 class Dropdown(tk.Label):
     """A choice from a longer list: the current one, and a menu of all on click."""
 
@@ -1923,8 +1947,6 @@ class Launcher:
             self.widgets["mouse"].set(settings.get("mouse", True))
             self.widgets["mouse_sens"].set(settings.get("mouse_sens", "1.0"))
             self.widgets["mouse_invert"].set(settings.get("mouse_invert", False))
-            self.widgets["mouse_aim_sens"].set(settings.get("mouse_aim_sens", "1.0"))
-            self.widgets["mouse_vertical"].set(settings.get("mouse_vertical", "1.0"))
             self.widgets["mouse_invert_x"].set(settings.get("mouse_invert_x", False))
             self.widgets["vibration"].set(settings.get("vibration", True))
             self.widgets["prompts"].set(settings.get("prompts", "auto"))
@@ -2443,30 +2465,24 @@ class Launcher:
                                        lambda v: self.change_game_setting("mouse", v))
         self.widgets["mouse"].pack(side="left", padx=(self.px(8), self.px(22)))
         tk.Label(top, text="Sensitivity", font=self.f_body_bold, bg=BG, fg=TEXT).pack(side="left")
-        self.widgets["mouse_sens"] = Segmented(top, MOUSE_SENSITIVITIES, settings.get("mouse_sens", "1.0"),
-                                               lambda v: self.change_game_setting("mouse_sens", v), self.f_small)
+        self.widgets["mouse_sens"] = SensitivityEntry(
+            top, settings.get("mouse_sens", "1.0"),
+            lambda v: self.change_game_setting("mouse_sens", v), self.f_small)
         self.widgets["mouse_sens"].pack(side="left", padx=(self.px(8), self.px(22)))
         tk.Label(top, text="Invert Y", font=self.f_body_bold, bg=BG, fg=TEXT).pack(side="left")
         self.widgets["mouse_invert"] = Toggle(top, self.s, settings.get("mouse_invert", False),
                                               lambda v: self.change_game_setting("mouse_invert", v))
         self.widgets["mouse_invert"].pack(side="left", padx=(self.px(8), 0))
         self.flat_button(top, "Reset controls", self.reset_controls).pack(side="right")
-        aim = tk.Frame(page, bg=BG)
-        aim.pack(side="top", fill="x", pady=(self.px(10), 0))
-        tk.Label(aim, text="Aiming", font=self.f_body_bold, bg=BG, fg=TEXT).pack(side="left")
-        self.widgets["mouse_aim_sens"] = Segmented(aim, MOUSE_AIM_FACTORS, settings.get("mouse_aim_sens", "1.0"),
-                                                   lambda v: self.change_game_setting("mouse_aim_sens", v),
-                                                   self.f_small)
-        self.widgets["mouse_aim_sens"].pack(side="left", padx=(self.px(8), self.px(22)))
-        tk.Label(aim, text="Up/down", font=self.f_body_bold, bg=BG, fg=TEXT).pack(side="left")
-        self.widgets["mouse_vertical"] = Segmented(aim, MOUSE_FACTORS, settings.get("mouse_vertical", "1.0"),
-                                                   lambda v: self.change_game_setting("mouse_vertical", v),
-                                                   self.f_small)
-        self.widgets["mouse_vertical"].pack(side="left", padx=(self.px(8), self.px(22)))
-        tk.Label(aim, text="Invert X", font=self.f_body_bold, bg=BG, fg=TEXT).pack(side="left")
-        self.widgets["mouse_invert_x"] = Toggle(aim, self.s, settings.get("mouse_invert_x", False),
+        invert_row = tk.Frame(page, bg=BG)
+        invert_row.pack(side="top", fill="x", pady=(self.px(10), 0))
+        tk.Label(invert_row, text="Invert X", font=self.f_body_bold, bg=BG, fg=TEXT).pack(side="left")
+        self.widgets["mouse_invert_x"] = Toggle(invert_row, self.s, settings.get("mouse_invert_x", False),
                                                 lambda v: self.change_game_setting("mouse_invert_x", v))
         self.widgets["mouse_invert_x"].pack(side="left", padx=(self.px(8), 0))
+        tk.Label(invert_row, text="Raw input: desktop pointer speed and acceleration are ignored; "
+                                  "the same sensitivity applies while aiming.",
+                 font=self.f_small, bg=BG, fg=MUTED).pack(side="left", padx=(self.px(18), 0))
         # Controller vibration (#166): off stops every rumble.
         rumble = tk.Frame(page, bg=BG)
         rumble.pack(side="top", fill="x", pady=(self.px(10), 0))

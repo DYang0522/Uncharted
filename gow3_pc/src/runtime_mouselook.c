@@ -31,35 +31,27 @@ int runtime_mouselook_enabled(void) {
     return enabled;
 }
 
-/* Radians per mouse count at sensitivity 1 (the settings' mouse sensitivity scales it, live;
- * 0.0011 rad is about 0.063 degrees: a 2,000-count swipe turns about 126 degrees). */
+/* Radians per raw mouse count at sensitivity 1. The same linear scale is used while aiming and
+ * while moving; the camera-specific pitch limits are preserved. */
 static float look_scale(void) {
     const float s = gow3gpu_controls_mouse_sens();
-    /* While aiming: the mouse aim sensitivity on top (20 Oct 2026). */
-    const float aim = runtime_pad_aim_held() ? gow3gpu_controls_mouse_aim_sens() : 1.0f;
-    return 0.0011f * (s > 0.0f ? s : 1.0f) * (aim > 0.0f ? aim : 1.0f);
+    return 0.0011f * (s > 0.0f ? s : 1.0f);
 }
-/* The mouse movement with the left/right invert and the up/down speed applied (20 Oct 2026). */
+/* Raw mouse counts, with only the optional horizontal inversion applied. */
 static int take_mouse(float *dx, float *dy) {
     if (!gow3gpu_mouse_take_look(dx, dy)) return 0;
-    const float vertical = gow3gpu_controls_mouse_vertical();
     if (gow3gpu_controls_mouse_invert_x()) *dx = -*dx;
-    *dy *= vertical > 0.0f ? vertical : 1.0f;
     return 1;
 }
 static int take_look(float *dx, float *dy) {
-    /* While aiming the aim cameras take the mouse (their own hooks below) or read the right stick,
-     * which runtime_pad.c makes of the mouse; the follow camera keeps still (a turn of it would only
-     * show after aiming). gow3 24 Oct 2026: it neither takes the movement nor counts as a hook call
-     * then, so the pad's direct mode while aiming means an aim hook took the mouse at every pad read. */
+    /* While aiming the aim cameras take the mouse (their own hooks below); otherwise the follow
+     * camera takes it. The same sensitivity applies in both modes and on both axes. */
     if (runtime_pad_aim_held()) {
         *dx = *dy = 0.0f;
         return 0;
     }
     if (!gow3gpu_mouse_take_look(dx, dy)) return 0;
-    const float vertical = gow3gpu_controls_mouse_vertical();
     if (gow3gpu_controls_mouse_invert_x()) *dx = -*dx;
-    *dy *= vertical > 0.0f ? vertical : 1.0f;
     return 1;
 }
 /* gow3 24 Oct 2026: the games' own invert options flip the stick when the camera reads it (U1 ints at
