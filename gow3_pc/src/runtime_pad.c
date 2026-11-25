@@ -17,6 +17,7 @@
  * gpu/shim/gow3_prompts.cpp), or the fixed choice. */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "runtime_mouselook.h"
 #include "gpu/gow3gpu.h"
 #include "runtime_gamesettings.h"
 #include "runtime_uc2mp_diag.h"
@@ -529,18 +530,24 @@ int runtime_pad_aim_held(void) { return __atomic_load_n(&pad_aim_held,__ATOMIC_R
 void runtime_mouselook_trace_pad(int direct,float stick_x,float stick_y);
 static int sample_mouse(PadData *d) {
     if (!mouse_enabled()) return 0;
-    /* 20 Oct 2026: the aim sensitivity while aiming, the up/down speed and the left/right invert
-     * (the mouse look handlers apply the same). */
-    const float aim=runtime_pad_aim_held() ? gow3gpu_controls_mouse_aim_sens() : 1.0f;
-    const float vertical=gow3gpu_controls_mouse_vertical();
-    const float sensitivity=(controls.mouse_sens>0.0f ? controls.mouse_sens : 1.0f)*(aim>0.0f ? aim : 1.0f);
-    const float invert=controls.mouse_invert ? -1.0f : 1.0f;
-    const float invert_x=gow3gpu_controls_mouse_invert_x() ? -1.0f : 1.0f;
     float dx=0, dy=0; unsigned held=0;
     const int captured=gow3gpu_mouse_take(&dx,&dy,&held);
     const int used=captured && (held || fabsf(dx)+fabsf(dy)>2.0f);
     for (size_t i=0;i<mouse_map.count;++i)
         if (held & (1u<<(mouse_map.entries[i].source-1))) d->buttons|=mouse_map.entries[i].ps;
+
+    /* Publish mouse-trigger aim before deciding who owns this sample's look input. */
+    if (d->buttons & BTN_L2) d->l2=255;
+    const int aiming=(d->buttons & BTN_L2) || d->l2>30;
+    __atomic_store_n(&pad_aim_held,aiming,__ATOMIC_RELAXED);
+
+    /* 20 Oct 2026: the aim sensitivity while aiming, the up/down speed and the left/right invert
+     * (the mouse look handlers apply the same). */
+    const float aim=aiming ? gow3gpu_controls_mouse_aim_sens() : 1.0f;
+    const float vertical=gow3gpu_controls_mouse_vertical();
+    const float sensitivity=(controls.mouse_sens>0.0f ? controls.mouse_sens : 1.0f)*(aim>0.0f ? aim : 1.0f);
+    const float invert=controls.mouse_invert ? -1.0f : 1.0f;
+    const float invert_x=gow3gpu_controls_mouse_invert_x() ? -1.0f : 1.0f;
     static float vx, vy; static uint64_t last, last_motion;
     const uint64_t now=d->timestamp;
     float dt=last ? (float)(now-last)/1000.0f : 16.0f;
@@ -552,25 +559,15 @@ static int sample_mouse(PadData *d) {
     vx+=(dx/dt-vx)*blend;
     vy+=(dy/dt-vy)*blend;
     if (!captured || now-last_motion>60000) { vx=vy=0; return used; }
-    /* Mouse look drives the game's camera directly (src/runtime_mouselook.c): no stick. While
-     * aiming the games turn their aim cameras by the right stick, so the mouse is the stick then
-     * (20 Oct 2026: the follow camera's hook kept being called while aiming, which switched this
-     * path off most of the time: aiming with the mouse was choppy). */
-    const int aiming=runtime_pad_aim_held();
-    /* The follow camera's hook turns the camera directly only while that camera runs at every pad
-     * read (the last 4); climbing, hanging, scripted and aim cameras read the stick, and the hook
-     * may still be called now and then for a camera not on screen (20 Oct 2026: the mouse looked
-     * stuck there behind the old 200 ms rule). Otherwise the mouse is the stick and the hook gets
-     * nothing, so it never turns twice. */
+
+    /* Mouse look uses one owner: the camera hook in direct mode, otherwise the virtual stick. */
     static unsigned seen_calls, history;
     const unsigned calls=gow3gpu_mouse_look_calls();
     history=((history<<1)|(calls!=seen_calls ? 1u : 0u))&15u;
     seen_calls=calls;
-    /* gow3 24 Oct 2026: while aiming only the aim cameras' hooks count (Uncharted 2 and 3, see
-     * runtime_mouselook.c; the follow hooks neither take nor count then), so direct while aiming
-     * means an aim hook took the mouse at every pad read. Without one (Uncharted 1, the hook off, the
-     * game putting the direction back while it zooms in) the mouse is the stick, as before. */
-    const int direct=history==15u;
+    /* When an enabled aim hook is installed, L2 transfers ownership immediately. Do not wait for
+     * four pad reads to decide that the aim camera owns the raw mouse queue. */
+    const int direct=(aiming && runtime_mouselook_aim_direct()) || history==15u;
     gow3gpu_mouse_look_pause(!direct);
     if (mouse_look_debug()) {
         static uint64_t debug_last; static unsigned reads, direct_reads;
@@ -583,6 +580,7 @@ static int sample_mouse(PadData *d) {
         }
     }
     if (direct) { runtime_mouselook_trace_pad(1,0.0f,0.0f); vx=vy=0; return used; }
+
     /* The games turn at about (deflection past a ~0.15 dead zone)^1.5 of their full speed. The
      * deflection is the inverse of that, so the turn follows the mouse's speed evenly (the linear
      * mapping before turned slow movements too little and fast ones too much). */
@@ -656,6 +654,8 @@ static void sample_host(PadData *d) {
         key_axis(&d->right_x,held[RS_LEFT],held[RS_RIGHT]);
         key_axis(&d->right_y,held[RS_UP],held[RS_DOWN]);
     }
+    if (d->buttons & BTN_L2) d->l2=255;
+    __atomic_store_n(&pad_aim_held,(d->buttons & BTN_L2) || d->l2>30,__ATOMIC_RELAXED);
     if (sample_mouse(d)) keyboard_used=1;
     if (d->buttons & BTN_L2) d->l2=255;
     __atomic_store_n(&pad_aim_held,(d->buttons & BTN_L2) || d->l2>30,__ATOMIC_RELAXED);

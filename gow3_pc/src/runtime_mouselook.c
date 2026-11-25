@@ -13,6 +13,7 @@
 #include <time.h>
 
 static unsigned char *image;
+static int aim_direct_enabled;
 
 static void trace_init(void);
 void runtime_mouselook_set_image(unsigned char *base) {
@@ -1312,6 +1313,17 @@ static int u1_aim_enabled(void) {
     if (enabled < 0) enabled = knob("GOW3_MOUSE_LOOK_U1_AIM", 1);
     return enabled;
 }
+/* Called by the hook installer. L2 can transfer raw mouse ownership immediately only when its
+ * direct aim-camera consumer was actually installed and enabled. */
+void runtime_mouselook_site_installed(uint64_t offset) {
+    switch (offset) {
+    case 0x276a10: aim_direct_enabled = u1_aim_enabled(); break;
+    case 0x450e40: aim_direct_enabled = u2_aim_enabled(); break;
+    case 0x511370: aim_direct_enabled = u3_aim_enabled(); break;
+    default: break;
+    }
+}
+int runtime_mouselook_aim_direct(void) { return aim_direct_enabled; }
 static U1Look u1_aim = {.name = "U1 aim"};
 static struct {
     int held;                    /* aiming at the last call */
@@ -1319,11 +1331,10 @@ static struct {
     unsigned clock;              /* calls, for replacing the least recently used controller */
     struct {
         const unsigned char *controller;
-        float dx, dy;            /* how much of the press's turn this controller's direction has */
+        float dx, dy;            /* amount of press movement already applied */
         unsigned used;
+        uint64_t at;             /* last active time; stale controllers must not replay old input */
     } given[4];
-    float last[3];               /* the last turned direction */
-    int have_last;
 } u1_press;
 static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, void *unused, float *dir) {
     (void)out;
@@ -1354,25 +1365,22 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         }
         if (u1_press.given[i].used < u1_press.given[slot].used) slot = i;
     }
-    if (!found) {
-        const float *l = u1_press.last;
-        const float dot = dir[0] * l[0] + dir[1] * l[1] + dir[2] * l[2];
-        const float lengths = sqrtf((dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]) *
-                                    (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]));
-        const int continues = u1_press.have_last && lengths > 0.0f && dot > 0.9986f * lengths;
+    const uint64_t now = now_ms();
+    if (!found || now - u1_press.given[slot].at > 100) {
+        /* New or stale controllers start from now; don't replay mouse movement from earlier
+         * in this aim press when the game replaces its aim controller. */
         u1_press.given[slot].controller = controller;
-        u1_press.given[slot].dx = continues ? u1_press.dx : 0.0f;
-        u1_press.given[slot].dy = continues ? u1_press.dy : 0.0f;
+        u1_press.given[slot].dx = u1_press.dx - dx;
+        u1_press.given[slot].dy = u1_press.dy - dy;
     }
     u1_press.given[slot].used = ++u1_press.clock;
+    u1_press.given[slot].at = now;
     const float turn_x = u1_press.dx - u1_press.given[slot].dx, turn_y = u1_press.dy - u1_press.given[slot].dy;
     const float per_count = look_scale();
     if (turn_x != 0.0f) rotate_look(dir, turn_x, per_count);
     if (turn_y != 0.0f) pitch_dir(dir, turn_y, per_count, -70.0f, 70.0f);
     u1_press.given[slot].dx = u1_press.dx;
     u1_press.given[slot].dy = u1_press.dy;
-    memcpy(u1_press.last, dir, sizeof(u1_press.last));
-    u1_press.have_last = 1;
     if (look_debug()) {
         static LookDebug d;
         look_debug_line(&d, &u1_aim, 1, controller, dir, (float)slot, -70.0f, 70.0f, NULL, 1);

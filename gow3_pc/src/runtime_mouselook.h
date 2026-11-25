@@ -22,6 +22,9 @@ typedef struct {
  * controller camera speed does nothing). */
 int runtime_mouselook_enabled(void);
 const MouseLookSite *runtime_mouselook_sites(unsigned *count);
+/* True when an enabled direct aim-camera hook was installed in the active executable. */
+int runtime_mouselook_aim_direct(void);
+void runtime_mouselook_site_installed(uint64_t offset);
 void runtime_mouselook_set_image(unsigned char *image);
 /* runtime_pad.c: the aim button (L2) was held at the last pad read. */
 int runtime_pad_aim_held(void);

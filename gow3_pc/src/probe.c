@@ -964,6 +964,7 @@ static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size)
             printf("Mouse look: %s unavailable (stub out of range)\n", site->game);
             continue;
         }
+        runtime_mouselook_site_installed(site->offset);
         runtime_mouselook_set_image(image);
         printf("Mouse look: %s camera at image offset %#llx\n", site->game, (unsigned long long)site->offset);
         used += 256;
