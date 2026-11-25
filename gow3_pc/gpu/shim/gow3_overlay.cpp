@@ -1096,7 +1096,7 @@ void ControlsTab() {
                              "One linear raw-input multiplier for normal camera movement and aiming, both "
                              "horizontally and vertically.");
         changed |= PercentRow("Mouse up/down speed", s.mouse_vertical, 25, 300,
-                              "Looking up and down compared with left and right.");
+                              "Normal camera movement only; aiming is not affected.");
         Row("Invert mouse up/down");
         bool invert = s.mouse_invert;
         if (ImGui::Checkbox("##value", &invert)) {

@@ -38,17 +38,15 @@ static float look_scale(void) {
     const float s = gow3gpu_controls_mouse_sens();
     return 0.0003839724f * (s > 0.0f ? s : 1.0f);
 }
-/* Raw mouse counts with the configured vertical speed and horizontal inversion applied. */
+/* Raw mouse counts for the dedicated aim-camera path; no normal-view vertical multiplier. */
 static int take_mouse(float *dx, float *dy) {
     if (!gow3gpu_mouse_take_look(dx, dy)) return 0;
-    const float vertical = gow3gpu_controls_mouse_vertical();
     if (gow3gpu_controls_mouse_invert_x()) *dx = -*dx;
-    *dy *= vertical > 0.0f ? vertical : 1.0f;
     return 1;
 }
 static int take_look(float *dx, float *dy) {
-    /* While aiming the aim cameras take the mouse (their own hooks below); otherwise the follow
-     * camera takes it. The same sensitivity applies in both modes and on both axes. */
+    /* The aim cameras use take_mouse(); this path is for normal camera movement only.
+     * The up/down speed setting applies here, without changing aiming sensitivity. */
     if (runtime_pad_aim_held()) {
         *dx = *dy = 0.0f;
         return 0;
