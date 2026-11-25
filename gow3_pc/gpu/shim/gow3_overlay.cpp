@@ -1095,6 +1095,8 @@ void ControlsTab() {
         changed |= FactorRow("Mouse sensitivity", s.mouse_sens, 0.1f, 10.0f,
                              "One linear raw-input multiplier for normal camera movement and aiming, both "
                              "horizontally and vertically.");
+        changed |= PercentRow("Mouse up/down speed", s.mouse_vertical, 25, 300,
+                              "Looking up and down compared with left and right.");
         Row("Invert mouse up/down");
         bool invert = s.mouse_invert;
         if (ImGui::Checkbox("##value", &invert)) {

@@ -38,10 +38,12 @@ static float look_scale(void) {
     const float s = gow3gpu_controls_mouse_sens();
     return 0.0003839724f * (s > 0.0f ? s : 1.0f);
 }
-/* Raw mouse counts, with only the optional horizontal inversion applied. */
+/* Raw mouse counts with the configured vertical speed and horizontal inversion applied. */
 static int take_mouse(float *dx, float *dy) {
     if (!gow3gpu_mouse_take_look(dx, dy)) return 0;
+    const float vertical = gow3gpu_controls_mouse_vertical();
     if (gow3gpu_controls_mouse_invert_x()) *dx = -*dx;
+    *dy *= vertical > 0.0f ? vertical : 1.0f;
     return 1;
 }
 static int take_look(float *dx, float *dy) {
@@ -52,7 +54,9 @@ static int take_look(float *dx, float *dy) {
         return 0;
     }
     if (!gow3gpu_mouse_take_look(dx, dy)) return 0;
+    const float vertical = gow3gpu_controls_mouse_vertical();
     if (gow3gpu_controls_mouse_invert_x()) *dx = -*dx;
+    *dy *= vertical > 0.0f ? vertical : 1.0f;
     return 1;
 }
 /* gow3 24 Oct 2026: the games' own invert options flip the stick when the camera reads it (U1 ints at
