@@ -879,6 +879,7 @@ static unsigned char *allocate_near_image(uint64_t size) {
     (void)size;
     return NULL;
 #endif
+#endif
 }
 #include "uc2mp_spawn_bridge.h"
 #include "uc2mp_game_frame_bridge.h"
