@@ -31,11 +31,11 @@ int runtime_mouselook_enabled(void) {
     return enabled;
 }
 
-/* Radians per raw mouse count at sensitivity 1. The same linear scale is used while aiming and
- * while moving; the camera-specific pitch limits are preserved. */
+/* Radians per raw mouse count at sensitivity 1: 0.022 degrees, matching CS2's default
+ * m_yaw/m_pitch scale. One sensitivity value now scales both axes and all camera modes. */
 static float look_scale(void) {
     const float s = gow3gpu_controls_mouse_sens();
-    return 0.0011f * (s > 0.0f ? s : 1.0f);
+    return 0.0003839724f * (s > 0.0f ? s : 1.0f);
 }
 /* Raw mouse counts, with only the optional horizontal inversion applied. */
 static int take_mouse(float *dx, float *dy) {
