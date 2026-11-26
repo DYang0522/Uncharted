@@ -1005,7 +1005,7 @@ static unsigned build_u1_aim_post_stub(unsigned char *p, uint64_t at, unsigned l
 static void install_u1_aim_post_hooks(Segment *segments, uint64_t count, uint64_t size,
                                       unsigned char **stubs, unsigned *used, int owner_installed) {
     runtime_mouselook_u1_post_installed(0);
-    if (!runtime_mouselook_aim_direct()) return;
+    if (!runtime_mouselook_u1_aim_direct()) return;
     if (!owner_installed) {
         puts("Mouse look: U1 AIM_POST inactive (active aim-camera hook not found)");
         return;
@@ -1121,7 +1121,7 @@ static int64_t find_unique_code(Segment *segments, uint64_t count, const char *p
  * Hooking it avoids treating every inner 0x276a10 controller invocation as the displayed camera. */
 static int install_u1_aim_camera_owner_hook(Segment *segments, uint64_t count, uint64_t size,
                                              unsigned char **stubs, unsigned *used) {
-    if (!runtime_mouselook_aim_direct()) return 0;
+    if (!runtime_mouselook_u1_aim_direct()) return 0;
     static const char pattern[] =
         "55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 68 02 00 00 "
         "49 89 d7 48 89 f3 49 89 fe 4c ?? 2d";
