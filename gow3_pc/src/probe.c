@@ -1151,7 +1151,7 @@ static int install_u1_aim_camera_owner_hook(Segment *segments, uint64_t count, u
         return 0;
     }
     *used += 256;
-    printf("Mouse look: U1 active aim-camera owner at image offset %#llx\\n", (unsigned long long)found);
+    printf("Mouse look: U1 active aim-camera owner at image offset %#llx\n", (unsigned long long)found);
     return 1;
 }
 /* gow3 4 Nov 2026: Uncharted 1 physics above 60 FPS (1.02, EU and US). The rigid-body integrator
