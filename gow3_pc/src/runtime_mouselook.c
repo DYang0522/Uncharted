@@ -1370,7 +1370,6 @@ static struct {
     float dx, dy;                /* this press's mouse turn so far (counts, game invert applied) */
     unsigned clock;              /* calls, for replacing the least recently used controller */
     float follow_heading;         /* frozen opposite Follow2 heading for this L2 press */
-    float follow_pitch;            /* Follow2 direction pitch; not the separate vertical arc */
     int follow_heading_valid;
     struct {
         const unsigned char *controller;
@@ -1398,6 +1397,8 @@ static float u1_post_pending_dx, u1_post_pending_dy;
 static int u1_post_pending;
 static void u1_post_add_mouse(float dx, float dy);
 static void u1_post_apply(uint64_t camera, int primary);
+static float wrap_degrees(float value);
+static void u1_post_write_angles(float *dir, float target_heading_degrees, float target_pitch_degrees);
 
 /* Apply an angular delta to a native U1 direction vector, retaining its length and any
  * camera-specific offset. Follow2's +0x12bc arc is not pitch; these fields are the aim
@@ -1497,7 +1498,6 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
             };
             if (aim_usable(fresh_direction)) {
                 u1_press.follow_heading = dir_heading(fresh_direction);
-                u1_press.follow_pitch = dir_pitch(fresh_direction);
                 u1_press.follow_heading_valid = 1;
             }
         }
@@ -1525,6 +1525,11 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
      * transplant the outgoing camera's absolute pitch onto a different camera object. */
     const int carry_heading = u1_post_seeded;
     const float carried_heading = u1_post_heading;
+    const float carried_pitch = u1_post_pitch;
+    const int incoming_has_carried_angles =
+        carry_heading && aim_usable(dir) &&
+        fabsf(wrap_degrees(dir_heading(dir) - carried_heading)) < 3.0f &&
+        fabsf(dir_pitch(dir) - carried_pitch) < 3.0f;
     if (camera_changed) {
         u1_post_camera = u1_aim_active_camera;
         u1_post_seeded = 0;
@@ -1546,8 +1551,10 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         }
         while (target_heading > 180.0f) target_heading -= 360.0f;
         while (target_heading < -180.0f) target_heading += 360.0f;
-        float target_pitch = dir_pitch(dir) -
-                            u1_press.dy * look_scale() * 57.29578f * look_invert();
+        float target_pitch = incoming_has_carried_angles
+                                 ? dir_pitch(dir)
+                                 : dir_pitch(dir) -
+                                       u1_press.dy * look_scale() * 57.29578f * look_invert();
         if (target_pitch < -70.0f) target_pitch = -70.0f;
         if (target_pitch > 70.0f) target_pitch = 70.0f;
         u1_align_aim_camera_vectors((unsigned char *)controller - 0xa50, dir,
@@ -1754,16 +1761,34 @@ void runtime_mouselook_u1_post_installed(int installed) {
 
 /* Follow and Cover keep their own offsets while the camera blend follows the zoom camera. */
 static void u1_follow_follows_aim(float *dir) {
-    static uint64_t offset_press;
-    static float heading_offset, pitch_offset;
+    static struct {
+        float *dir;
+        uint64_t press_id;
+        float heading_offset, pitch_offset;
+        unsigned used;
+    } offsets[4];
+    static unsigned clock;
     if (!u1_post_tracking || !u1_post_seeded || !runtime_pad_aim_held() || !dir) return;
-    if (offset_press != u1_post_press_id) {
-        offset_press = u1_post_press_id;
-        heading_offset = wrap_degrees(dir_heading(dir) - u1_post_heading);
-        pitch_offset = dir_pitch(dir) - u1_post_pitch;
+
+    unsigned slot = 0;
+    int found = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        if (offsets[i].dir == dir) {
+            slot = i;
+            found = 1;
+            break;
+        }
+        if (!offsets[i].dir || offsets[i].used < offsets[slot].used) slot = i;
     }
-    u1_post_write_angles(dir, wrap_degrees(u1_post_heading + heading_offset),
-                         u1_post_pitch + pitch_offset);
+    if (!found || offsets[slot].press_id != u1_post_press_id) {
+        offsets[slot].dir = dir;
+        offsets[slot].press_id = u1_post_press_id;
+        offsets[slot].heading_offset = wrap_degrees(dir_heading(dir) - u1_post_heading);
+        offsets[slot].pitch_offset = dir_pitch(dir) - u1_post_pitch;
+    }
+    offsets[slot].used = ++clock;
+    u1_post_write_angles(dir, wrap_degrees(u1_post_heading + offsets[slot].heading_offset),
+                         u1_post_pitch + offsets[slot].pitch_offset);
 }
 static void u1_cover_follows_aim(float *dir, float *pitch, float lo, float hi) {
     static uint64_t offset_press;
