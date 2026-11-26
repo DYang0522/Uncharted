@@ -1542,6 +1542,11 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
 void runtime_mouselook_u1_aim_release_camera(uint64_t camera) {
     (void)camera;
 
+    /* The game's release branch is evaluated per aim-camera instance. During an aim
+     * transition, a non-active camera can skip the native helper while L2 is still held.
+     * Never clear the shared press/post state for that camera-local branch. */
+    if (runtime_pad_aim_held()) return;
+
     u1_press.held = 0;
     u1_press.dx = u1_press.dy = 0.0f;
     u1_press.clock = 0;
