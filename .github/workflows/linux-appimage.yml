@@ -36,6 +36,7 @@ jobs:
         run: |
           # Keep downloaded .deb files so the workflow cache can reuse them.
           rm -f /etc/apt/apt.conf.d/docker-clean
+          mkdir -p "$CCACHE_DIR" /var/cache/apt/archives
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git rsync
 
