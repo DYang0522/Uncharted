@@ -515,6 +515,8 @@ static U1Look u1_follow = {.name = "follow"}, u1_cover = {.name = "cover"};
 static float u1_follow_direction[4];
 static uint64_t u1_follow_direction_at;
 static int u1_follow_direction_valid;
+static float u1_follow_arc;
+static const unsigned char *u1_follow_camera;
 
 static float wrap_angle(float a) {
     while (a > 3.14159265f) a -= 6.28318531f;
@@ -673,6 +675,8 @@ static void u1_follow_turn(unsigned char *camera, float *dir, const float *tune,
      * press on the same frame must start from the direction the player actually sees. */
     if (newest) {
         memcpy(u1_follow_direction, dir, sizeof(u1_follow_direction));
+        u1_follow_camera = camera;
+        u1_follow_arc = *(const float *)(camera + 0x12bc);
         u1_follow_direction_at = now_ms();
         u1_follow_direction_valid = 1;
     }
@@ -780,6 +784,8 @@ static ABI void *u1_follow_camera_input(unsigned char *location, unsigned char *
      * The aim-input hook runs later in this camera frame. */
     if (params[0x08]) {
         memcpy(u1_follow_direction, dir, sizeof(u1_follow_direction));
+        u1_follow_camera = camera;
+        u1_follow_arc = *(const float *)(camera + 0x12bc);
         u1_follow_direction_at = now_ms();
         u1_follow_direction_valid = 1;
     }
@@ -1403,6 +1409,32 @@ static void u1_align_aim_heading(float *dir, float heading) {
     dir[2] = cosf(angle) * horizontal;
 }
 
+/* Read-only U1 vertical-baseline trace. The custom u1v line compares the fallback
+ * vector (+0x1680), remembered aim vector (+0x1830), and the latest raw Follow2
+ * direction/arc at a fresh L2 press or camera replacement. It does not change state. */
+static void u1_trace_aim_sources(const unsigned char *controller, const float *dir, char reason) {
+    if (!trace_file || !controller || !dir) return;
+    const float *fallback = (const float *)(controller + 0xc30);
+    const uint64_t now = now_ms();
+    const uint64_t age = u1_follow_direction_valid ? now - u1_follow_direction_at : UINT64_MAX;
+    const int follow_fresh = u1_follow_direction_valid && age <= 100;
+    const float fallback_h = aim_usable(fallback) ? dir_heading(fallback) : NAN;
+    const float fallback_p = aim_usable(fallback) ? dir_pitch(fallback) : NAN;
+    const float aim_h = aim_usable(dir) ? dir_heading(dir) : NAN;
+    const float aim_p = aim_usable(dir) ? dir_pitch(dir) : NAN;
+    const float follow_h = follow_fresh ? dir_heading(u1_follow_direction) : NAN;
+    const float follow_p = follow_fresh ? dir_pitch(u1_follow_direction) : NAN;
+    fprintf(trace_file,
+            "%.4f u1v ctrl=%p aim_camera=%p reason=%c fallback_h=%.3f fallback_p=%.3f "
+            "aim_h=%.3f aim_p=%.3f follow_camera=%p follow_h=%.3f follow_p=%.3f "
+            "follow_arc=%.5f follow_age_ms=%llu\n",
+            wall_seconds(), (const void *)controller, (const void *)(uintptr_t)u1_aim_active_camera, reason,
+            fallback_h, fallback_p, aim_h, aim_p, (const void *)u1_follow_camera, follow_h, follow_p,
+            u1_follow_camera ? u1_follow_arc : NAN,
+            (unsigned long long)(age == UINT64_MAX ? 0 : age));
+    trace_flush();
+}
+
 static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, void *unused, float *dir) {
     (void)out;
     (void)unused;
@@ -1451,6 +1483,7 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
                 u1_press.follow_heading_valid = 1;
             }
         }
+        u1_trace_aim_sources(controller, dir, 'p');
     }
 
     /* Each controller instance gets the same fresh yaw once, while retaining its own
@@ -1475,9 +1508,12 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     const float carried_heading = u1_post_heading;
     if (camera_changed) {
         u1_post_camera = u1_aim_active_camera;
+        u1_trace_aim_sources(controller, dir, 'c');
         /* Match the continuous Build #100 handoff: keep the post target seeded across
          * camera-instance changes so live mouse deltas are applied immediately, not queued
          * until the replacement camera seeds itself. */
+    } else if (new_controller && u1_post_seeded) {
+        u1_trace_aim_sources(controller, dir, 'n');
     }
     if ((new_controller || camera_changed) && u1_press.follow_heading_valid) {
         float target_heading;
