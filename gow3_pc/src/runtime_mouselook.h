@@ -33,3 +33,7 @@ void runtime_mouselook_trace_pad(int direct, float stick_x, float stick_y);
 /* gow3 1 Nov 2026: code patches besides the entry hooks (Uncharted 1's stick reads after the follow
  * camera's turn); probe.c calls it once after the sites, while the image is still writable. */
 void runtime_mouselook_install_patches(void);
+/* U1 1.02 AIM_POST hooks after the two zoom direction stores. */
+void runtime_mouselook_u1_aim_post_main(uint64_t camera);
+void runtime_mouselook_u1_aim_post_zoom(uint64_t camera);
+void runtime_mouselook_u1_post_installed(int installed);

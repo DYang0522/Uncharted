@@ -14,6 +14,8 @@
 
 static unsigned char *image;
 static int aim_direct_enabled;
+static void u1_follow_follows_aim(float *dir);
+static void u1_cover_follows_aim(float *dir, float *pitch, float lo, float hi);
 
 static void trace_init(void);
 void runtime_mouselook_set_image(unsigned char *base) {
@@ -758,6 +760,7 @@ static ABI void *u1_follow_camera_input(unsigned char *location, unsigned char *
     if (!u1_enabled() || !camera || !params) return NULL;
     u1_apply_pending(camera, 1); /* a turn its last stick step did not take */
     float *dir = (float *)(camera + 0x1310);
+    u1_follow_follows_aim(dir);
     const float *tune = *(const float *const *)(camera + 0x1e0);
     const int usable = tune && u1_follow_usable(dir);
     const float heading = dir_heading(dir), arc = *(const float *)(camera + 0x12bc);
@@ -993,6 +996,8 @@ static ABI void *u1_cover_camera_input(unsigned char *location, unsigned char *c
     if (!camera || !params || !camera[0x1f4]) return NULL;
     float *dir = (float *)(camera + 0x240);
     const float *tune = *(const float *const *)(camera + 0x1300);
+    float *pitch = (float *)(camera + 0x230);
+    u1_cover_follows_aim(dir, pitch, tune ? -tune[0xc / 4] : -45.0f, tune ? tune[0x8 / 4] : 45.0f);
     const uint64_t now = now_ms();
     if (look_debug()) {
         static uint64_t last;
@@ -1338,17 +1343,58 @@ static struct {
         uint64_t at;             /* last active time; stale controllers must not replay old input */
     } given[4];
 } u1_press;
+
+/* U1 AIM_POST: correct the zoom direction after the game rebuilds +0x1830.
+ * The game keeps updating its own camera transition; these hooks only reapply
+ * the mouse's accumulated angular offset after the final direction stores. */
+static int u1_post_hooks_installed;
+static int u1_post_active;
+static int u1_post_tracking;
+static int u1_post_seeded;
+static int u1_post_match;
+static int u1_post_written_ok;
+static unsigned u1_post_frames;
+static uint64_t u1_post_camera;
+static uint64_t u1_post_start_ms;
+static uint64_t u1_post_last_primary_ms;
+static uint64_t u1_post_press_id;
+static float u1_post_heading, u1_post_pitch;
+static float u1_post_written_heading, u1_post_written_pitch;
+static float u1_post_pending_dx, u1_post_pending_dy;
+static int u1_post_pending;
+static void u1_post_add_mouse(float dx, float dy);
+static void u1_post_apply(uint64_t camera, int primary);
+
 static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, void *unused, float *dir) {
     (void)out;
     (void)unused;
     if (!u1_aim_enabled() || !controller || !dir) return NULL;
     if (!runtime_pad_aim_held()) {
         u1_press.held = 0;
+        u1_post_active = 0;
+        u1_post_tracking = 0;
+        u1_post_seeded = 0;
+        u1_post_pending = 0;
+        u1_post_camera = 0;
+        u1_post_start_ms = 0;
+        u1_post_written_ok = 0;
         return NULL;
     }
     if (!u1_press.held) {
         memset(&u1_press, 0, sizeof(u1_press));
         u1_press.held = 1;
+        u1_post_tracking = u1_post_hooks_installed;
+        u1_post_active = u1_post_hooks_installed;
+        u1_post_seeded = 0;
+        u1_post_match = 0;
+        u1_post_written_ok = 0;
+        u1_post_frames = 0;
+        u1_post_camera = 0;
+        u1_post_start_ms = now_ms();
+        u1_post_last_primary_ms = 0;
+        u1_post_pending_dx = u1_post_pending_dy = 0.0f;
+        u1_post_pending = 0;
+        ++u1_post_press_id;
     }
     if (!aim_usable(dir)) return NULL;
     float dx = 0, dy = 0;
@@ -1356,6 +1402,14 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     if (aim_take(&u1_aim, (const int *)(image + 0x95ca20), &dx, &dy)) {
         u1_press.dx += dx;
         u1_press.dy += dy;
+        if (u1_post_tracking) {
+            if (u1_post_seeded) u1_post_add_mouse(dx, dy);
+            else {
+                u1_post_pending_dx += dx;
+                u1_post_pending_dy += dy;
+                u1_post_pending = 1;
+            }
+        }
     }
     mouse_trace("u1a", controller, 1, heading, pitch, dx, dy, dx != 0.0f || dy != 0.0f ? 'd' : '-');
     int slot = 0, found = 0;
@@ -1389,6 +1443,135 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     }
     return NULL;
 }
+static float wrap_degrees(float value) {
+    while (value > 180.0f) value -= 360.0f;
+    while (value < -180.0f) value += 360.0f;
+    return value;
+}
+static void u1_post_add_mouse(float dx, float dy) {
+    const float degrees_per_count = look_scale() * 57.29578f;
+    u1_post_heading = wrap_degrees(u1_post_heading - dx * degrees_per_count);
+    u1_post_pitch -= dy * degrees_per_count * look_invert();
+    if (u1_post_pitch < -70.0f) u1_post_pitch = -70.0f;
+    if (u1_post_pitch > 70.0f) u1_post_pitch = 70.0f;
+}
+static void u1_post_set_heading(float *dir, float target_heading) {
+    if (!dir) return;
+    const float angle = wrap_degrees(target_heading - dir_heading(dir)) * 0.017453292f;
+    if (fabsf(angle) < 1e-6f) return;
+    const float c = cosf(angle), s = sinf(angle);
+    const float x = dir[0], z = dir[2];
+    dir[0] = x * c + z * s;
+    dir[2] = z * c - x * s;
+}
+static void u1_post_write_direction(float *dir) {
+    const float len2 = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+    const float horizontal2 = dir[0] * dir[0] + dir[2] * dir[2];
+    if (!(len2 > 0.92f && len2 < 1.08f) || !(horizontal2 > 1e-4f)) return;
+    const float heading = dir_heading(dir);
+    const float yaw = wrap_degrees(u1_post_heading - heading) * 0.017453292f;
+    const float c = cosf(yaw), s = sinf(yaw);
+    const float x = dir[0], z = dir[2];
+    const float nx = x * c + z * s;
+    const float nz = z * c - x * s;
+    const float horizontal = sqrtf(nx * nx + nz * nz);
+    if (!(horizontal > 1e-4f)) return;
+    const float length = sqrtf(len2);
+    const float target_pitch = u1_post_pitch * 0.017453292f;
+    const float cp = cosf(target_pitch) * length / horizontal;
+    dir[0] = nx * cp;
+    dir[2] = nz * cp;
+    dir[1] = sinf(target_pitch) * length;
+}
+static void u1_post_apply(uint64_t camera, int primary) {
+    if (!u1_post_active || !runtime_pad_aim_held() || !camera) return;
+    float *dir = (float *)(uintptr_t)(camera + 0x1830);
+    const float len2 = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+    if (!(len2 > 0.92f && len2 < 1.08f)) return;
+    const float heading = dir_heading(dir);
+    const float pitch = dir_pitch(dir);
+
+    if (!primary && (!u1_post_seeded || camera != u1_post_camera)) return;
+    if (primary) {
+        if (!u1_post_seeded) {
+            u1_post_camera = camera;
+            u1_post_heading = heading;
+            u1_post_pitch = pitch;
+            u1_post_seeded = 1;
+            if (u1_post_pending) {
+                u1_post_add_mouse(u1_post_pending_dx, u1_post_pending_dy);
+                u1_post_pending_dx = u1_post_pending_dy = 0.0f;
+                u1_post_pending = 0;
+            }
+        } else if (camera != u1_post_camera) {
+            /* A replacement zoom camera inherits this press's wanted direction. */
+            u1_post_camera = camera;
+            u1_post_match = 0;
+            u1_post_written_ok = 0;
+        }
+
+        const uint64_t now = now_ms();
+        const int new_frame = !u1_post_last_primary_ms || now - u1_post_last_primary_ms >= 4;
+        if (new_frame) {
+            if (u1_post_written_ok) {
+                const float yaw_gap = fabsf(wrap_degrees(heading - u1_post_written_heading));
+                const float pitch_gap = fabsf(pitch - u1_post_written_pitch);
+                u1_post_match = yaw_gap < 0.3f && pitch_gap < 0.3f ? u1_post_match + 1 : 0;
+            }
+            u1_post_last_primary_ms = now;
+            ++u1_post_frames;
+        }
+    }
+
+    u1_post_write_direction(dir);
+    if (primary) {
+        u1_post_written_heading = dir_heading(dir);
+        u1_post_written_pitch = dir_pitch(dir);
+        u1_post_written_ok = 1;
+        if (u1_post_match >= 3) {
+            u1_post_active = 0;
+            printf("Mouse: U1 aim post-update handoff complete (%u frames, %llu ms); direct mouse retained\n",
+                   u1_post_frames, (unsigned long long)(now_ms() - u1_post_start_ms));
+        }
+    }
+}
+void runtime_mouselook_u1_aim_post_main(uint64_t camera) {
+    u1_post_apply(camera, 1);
+}
+void runtime_mouselook_u1_aim_post_zoom(uint64_t camera) {
+    u1_post_apply(camera, 0);
+}
+void runtime_mouselook_u1_post_installed(int installed) {
+    u1_post_hooks_installed = installed != 0;
+}
+
+/* Follow and Cover keep their own offsets while the camera blend follows the zoom camera. */
+static void u1_follow_follows_aim(float *dir) {
+    static uint64_t offset_press;
+    static float offset;
+    if (!u1_post_tracking || !u1_post_seeded || !runtime_pad_aim_held() || !dir) return;
+    if (offset_press != u1_post_press_id) {
+        offset_press = u1_post_press_id;
+        offset = wrap_degrees(dir_heading(dir) - u1_post_heading);
+    }
+    u1_post_set_heading(dir, wrap_degrees(u1_post_heading + offset));
+}
+static void u1_cover_follows_aim(float *dir, float *pitch, float lo, float hi) {
+    static uint64_t offset_press;
+    static float heading_offset, pitch_offset;
+    if (!u1_post_tracking || !u1_post_seeded || !runtime_pad_aim_held() || !dir || !pitch) return;
+    if (offset_press != u1_post_press_id) {
+        offset_press = u1_post_press_id;
+        heading_offset = wrap_degrees(dir_heading(dir) - u1_post_heading);
+        pitch_offset = *pitch - u1_post_pitch;
+    }
+    u1_post_set_heading(dir, wrap_degrees(u1_post_heading + heading_offset));
+    float wanted = u1_post_pitch + pitch_offset;
+    if (wanted < lo) wanted = lo;
+    if (wanted > hi) wanted = hi;
+    *pitch = wanted;
+}
+
 /* A cover camera: flat direction dir (x, 0, z, 0) and pitch in degrees inside lo..hi; follow-camera
  * input (not while aiming), the follow camera's invert options. */
 static void cover_input(const char *hook, FrameTurn *frame, U1Look *s, int enabled, unsigned char *camera, float *dir,

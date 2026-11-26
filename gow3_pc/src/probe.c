@@ -945,6 +945,105 @@ static unsigned build_mouse_look_stub(unsigned char *p, const MouseLookSite *sit
     memcpy(p + n, &target, 8); n += 8;
     return n;
 }
+static unsigned build_u1_aim_post_stub(unsigned char *p, uint64_t at, unsigned length,
+                                        void (ABI *handler)(uint64_t), int camera_in_r12) {
+    unsigned n = 0;
+    static const unsigned char save[] = {
+        0x9c,                         /* pushfq */
+        0x50, 0x51, 0x52, 0x56, 0x57, /* rax, rcx, rdx, rsi, rdi */
+        0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53, /* r8-r11 */
+        0x53,                         /* rbx */
+        0x48, 0x89, 0xe3,             /* mov rbx, rsp (saved frame) */
+        0x48, 0x83, 0xe4, 0xf0,       /* and rsp, -16 */
+        0x48, 0x81, 0xec, 0x10, 0x01, 0x00, 0x00 /* sub rsp, 0x110 */
+    };
+    memcpy(p + n, save, sizeof(save)); n += sizeof(save);
+    for (unsigned x = 0; x < 16; ++x) {
+        p[n++] = 0xf3;
+        if (x >= 8) p[n++] = 0x44;    /* REX.R for xmm8-xmm15 */
+        p[n++] = 0x0f; p[n++] = 0x7f;
+        p[n++] = (unsigned char)(0x84 | ((x & 7) << 3)); p[n++] = 0x24;
+        const uint32_t offset = x * 16;
+        memcpy(p + n, &offset, 4); n += 4;
+    }
+    if (camera_in_r12) {
+        static const unsigned char camera_arg[] = {0x4c, 0x89, 0xe7}; /* mov rdi, r12 */
+        memcpy(p + n, camera_arg, sizeof(camera_arg)); n += sizeof(camera_arg);
+    } else {
+        static const unsigned char camera_arg[] = {0x48, 0x8b, 0x3b}; /* mov rdi, [rbx] (saved rbx) */
+        memcpy(p + n, camera_arg, sizeof(camera_arg)); n += sizeof(camera_arg);
+    }
+    p[n++] = 0x48; p[n++] = 0xb8; /* movabs rax, handler */
+    const uint64_t target = (uint64_t)(uintptr_t)handler;
+    memcpy(p + n, &target, 8); n += 8;
+    p[n++] = 0xff; p[n++] = 0xd0; /* call rax */
+    for (unsigned x = 0; x < 16; ++x) {
+        p[n++] = 0xf3;
+        if (x >= 8) p[n++] = 0x44;
+        p[n++] = 0x0f; p[n++] = 0x6f;
+        p[n++] = (unsigned char)(0x84 | ((x & 7) << 3)); p[n++] = 0x24;
+        const uint32_t offset = x * 16;
+        memcpy(p + n, &offset, 4); n += 4;
+    }
+    static const unsigned char restore[] = {
+        0x48, 0x89, 0xdc,             /* mov rsp, rbx */
+        0x5b,                         /* rbx */
+        0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, /* r11-r8 */
+        0x5f, 0x5e, 0x5a, 0x59, 0x58, 0x9d /* rdi,rsi,rdx,rcx,rax,popfq */
+    };
+    memcpy(p + n, restore, sizeof(restore)); n += sizeof(restore);
+    memcpy(p + n, image + at, length); n += length;
+    static const unsigned char jump[] = {0xff, 0x25, 0x00, 0x00, 0x00, 0x00};
+    memcpy(p + n, jump, sizeof(jump)); n += sizeof(jump);
+    const uint64_t resume = (uint64_t)(uintptr_t)(image + at + length);
+    memcpy(p + n, &resume, 8); n += 8;
+    return n;
+}
+static void install_u1_aim_post_hooks(Segment *segments, uint64_t count, uint64_t size,
+                                      unsigned char **stubs, unsigned *used) {
+    runtime_mouselook_u1_post_installed(0);
+    if (!runtime_mouselook_aim_direct()) return;
+
+    /* Hardcoded U1 zoom-direction stores: 0xc50cc -> hook at 0xc50d4 (RBX camera),
+     * 0xc2704 -> hook at 0xc270e (R12 camera). No version detection is performed. */
+    static const uint64_t offsets[] = {0xc50d4, 0xc270e};
+    static const unsigned lengths[] = {7, 6};
+    static void (ABI *const handlers[])(uint64_t) = {
+        runtime_mouselook_u1_aim_post_main, runtime_mouselook_u1_aim_post_zoom
+    };
+    static const int camera_in_r12[] = {0, 1};
+    unsigned installed = 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        const uint64_t at = offsets[i];
+        const unsigned length = lengths[i];
+        if (at + length > size || !mapped(segments, count, at, length)) {
+            printf("Mouse look: U1 AIM_POST hook %#llx is outside loaded code\n",
+                   (unsigned long long)at);
+            continue;
+        }
+        if (!*stubs && !(*stubs = allocate_near_image(size))) {
+            puts("Mouse look: U1 AIM_POST unavailable (no near-image stub page)");
+            break;
+        }
+        if (*used + 512 > page_size) {
+            puts("Mouse look: U1 AIM_POST unavailable (stub page full)");
+            break;
+        }
+        unsigned char *stub = *stubs + *used;
+        build_u1_aim_post_stub(stub, at, length, handlers[i], camera_in_r12[i]);
+        if (!install_jump(at, length, stub)) {
+            printf("Mouse look: U1 AIM_POST hook %#llx is out of jump range\n",
+                   (unsigned long long)at);
+            continue;
+        }
+        printf("Mouse look: U1 AIM_POST hook at %#llx\n", (unsigned long long)at);
+        *used += 512;
+        ++installed;
+    }
+    runtime_mouselook_u1_post_installed(installed == 2);
+    if (installed != 2)
+        printf("Mouse look: U1 AIM_POST inactive (%u/2 hooks installed)\n", installed);
+}
 static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size) {
     if (!runtime_mouselook_enabled()) return;
     unsigned n = 0, used = 0, installed = 0;
@@ -970,6 +1069,7 @@ static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size)
         used += 256;
         ++installed;
     }
+    install_u1_aim_post_hooks(segments, count, size, &stubs, &used);
     if (stubs) protect(stubs, page_size, 5);
     if (!installed) puts("Mouse look: no known camera code in this executable (mouse acts as the right stick)");
     else runtime_mouselook_install_patches(); /* gow3 1 Nov 2026 */
