@@ -1384,7 +1384,6 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_tracking = u1_post_hooks_installed;
         u1_post_active = u1_post_hooks_installed;
         u1_post_seeded = 0;
-        u1_post_written_ok = 0;
         u1_post_frames = 0;
         u1_post_camera = 0;
         u1_post_start_ms = now_ms();
