@@ -1460,9 +1460,20 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     const uint64_t now = now_ms();
     const int new_controller = !found;
     const int stale_controller = found && now - u1_press.given[slot].at > 100;
-    if (new_controller && u1_press.follow_heading_valid) {
-        /* Carry forward mouse yaw already applied during this press; a replacement
-         * camera must not snap back to the original L2-down heading. */
+    const int camera_changed = u1_post_hooks_installed && u1_aim_active_camera &&
+                              u1_post_camera != u1_aim_active_camera;
+    if (camera_changed) {
+        /* The post-update target belongs to the active camera instance. */
+        u1_post_camera = u1_aim_active_camera;
+        u1_post_seeded = 0;
+        u1_post_frames = 0;
+        u1_post_last_primary_ms = 0;
+        u1_post_pending_dx = u1_post_pending_dy = 0.0f;
+        u1_post_pending = 0;
+    }
+    if ((new_controller || camera_changed) && u1_press.follow_heading_valid) {
+        /* Carry forward mouse yaw already applied during this press; every active camera
+         * in the transition must agree without overwriting its own native pitch. */
         float target_heading = u1_press.follow_heading -
                                u1_press.dx * look_scale() * 57.29578f;
         while (target_heading > 180.0f) target_heading -= 360.0f;
@@ -1472,18 +1483,6 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     }
     if (!aim_usable(dir)) return NULL;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
-
-    /* The post-update target belongs to the active camera instance. When the game hands
-     * the active aim update to another camera, let that camera seed its own post target. */
-    if (u1_post_hooks_installed && u1_aim_active_camera &&
-        u1_post_camera != u1_aim_active_camera) {
-        u1_post_camera = u1_aim_active_camera;
-        u1_post_seeded = 0;
-        u1_post_frames = 0;
-        u1_post_last_primary_ms = 0;
-        u1_post_pending_dx = u1_post_pending_dy = 0.0f;
-        u1_post_pending = 0;
-    }
     float dx = 0, dy = 0;
     if (aim_take(&u1_aim, (const int *)(image + 0x95ca20), &dx, &dy)) {
         u1_press.dx += dx;
