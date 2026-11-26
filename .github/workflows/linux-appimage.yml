@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A new push supersedes the previous build on this branch.
+concurrency:
+  group: linux-appimage-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux-appimage:
     runs-on: ubuntu-26.04
@@ -31,7 +36,7 @@ jobs:
         run: |
           # Keep downloaded .deb files so the workflow cache can reuse them.
           rm -f /etc/apt/apt.conf.d/docker-clean
-          mkdir -p "$RUNNER_TEMP/ccache" /var/cache/apt/archives
+          mkdir -p "$GITHUB_WORKSPACE/.ci-cache/ccache" /var/cache/apt/archives
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git rsync
 
@@ -117,7 +122,7 @@ jobs:
       - name: Restore C/C++ compiler cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ runner.temp }}/ccache
+          path: ${{ github.workspace }}/.ci-cache/ccache
           key: ubuntu-26.04-ccache-${{ github.run_id }}
           restore-keys: |
             ubuntu-26.04-ccache-
@@ -129,9 +134,9 @@ jobs:
           GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
           CC: gcc-14
           CXX: g++-14
-          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache
           CCACHE_BASEDIR: ${{ github.workspace }}
-          CCACHE_MAXSIZE: 2G
+          CCACHE_MAXSIZE: 3G
           CCACHE_COMPILERCHECK: content
         run: |
           gcc --version
@@ -154,9 +159,9 @@ jobs:
           GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
           CC: gcc-14
           CXX: g++-14
-          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_DIR: ${{ github.workspace }}/.ci-cache/ccache
           CCACHE_BASEDIR: ${{ github.workspace }}
-          CCACHE_MAXSIZE: 2G
+          CCACHE_MAXSIZE: 3G
           CCACHE_COMPILERCHECK: content
         run: |
           mkdir -p "$HOME/.local/share"
@@ -166,13 +171,20 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: ${{ runner.temp }}/ccache
+          path: ${{ github.workspace }}/.ci-cache/ccache
           key: ubuntu-26.04-ccache-${{ github.run_id }}
 
       - name: Install relocatable Python for the AppImage
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
+
+      - name: Restore standalone Python cache
+        id: python-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/uv-python
+          key: ubuntu-26.04-python-3.12-v1
 
       - name: Prepare Python 3.12 with Tk
         env:
@@ -185,6 +197,13 @@ jobs:
           test -x "$python_standalone/bin/python3"
           "$python_standalone/bin/python3" -c 'import tkinter; print("Tk:", tkinter.TkVersion)'
           echo "PYTHON_STANDALONE=$python_standalone" >> "$GITHUB_ENV"
+
+      - name: Save standalone Python cache
+        if: steps.python-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/uv-python
+          key: ubuntu-26.04-python-3.12-v1
 
       - name: Restore AppImage tooling cache
         id: appimage-tool-cache
