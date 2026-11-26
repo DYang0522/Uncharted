@@ -1058,36 +1058,107 @@ static ABI void *u1_aim_camera_owner_input(unsigned char *buffer, unsigned char 
     return NULL;
 }
 
-/* U1's caller skips 0x276a10 after L2 release, but still reaches 0xc4c67.
- * Observe that common exit to clear MOD's press latch for the next L2 press. */
+/* U1's caller skips 0x276a10 when the byte tested at 0xc4c22 is zero.
+ * Hook the CMP/JE pair itself: the release handler then runs only on the branch which
+ * skips the native aim helper, not on the common exit reached by both paths. */
+static unsigned build_u1_aim_release_branch_stub(unsigned char *p, uint64_t at,
+                                                  void (ABI *handler)(uint64_t)) {
+    unsigned n = 0;
+    static const unsigned char save[] = {
+        0x9c,                         /* pushfq */
+        0x50, 0x51, 0x52, 0x56, 0x57, /* rax, rcx, rdx, rsi, rdi */
+        0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53, /* r8-r11 */
+        0x53,                         /* rbx */
+        0x48, 0x89, 0xe3,             /* mov rbx, rsp (saved frame) */
+        0x48, 0x83, 0xe4, 0xf0,       /* and rsp, -16 */
+        0x48, 0x81, 0xec, 0x10, 0x01, 0x00, 0x00 /* sub rsp, 0x110 */
+    };
+    memcpy(p + n, save, sizeof(save)); n += sizeof(save);
+    for (unsigned x = 0; x < 16; ++x) {
+        p[n++] = 0xf3;
+        if (x >= 8) p[n++] = 0x44;
+        p[n++] = 0x0f; p[n++] = 0x7f;
+        p[n++] = (unsigned char)(0x84 | ((x & 7) << 3)); p[n++] = 0x24;
+        const uint32_t offset = x * 16;
+        memcpy(p + n, &offset, 4); n += 4;
+    }
+
+    /* Test the exact condition before calling C. Original RAX is saved at [rbx+0x48].
+     * If the byte is nonzero, skip the release handler and only replay the CMP/JE. */
+    static const unsigned char test[] = {
+        0x48, 0x8b, 0x43, 0x48,       /* mov rax, [rbx+0x48] */
+        0x80, 0x78, 0x1b, 0x00,       /* cmp byte ptr [rax+0x1b], 0 */
+        0x75, 0x00                    /* jne restore_xmm (patched below) */
+    };
+    memcpy(p + n, test, sizeof(test)); n += sizeof(test);
+    const unsigned skip_disp = n - 1;
+
+    static const unsigned char camera_arg[] = {0x48, 0x8b, 0x3b}; /* mov rdi, [rbx] (camera) */
+    memcpy(p + n, camera_arg, sizeof(camera_arg)); n += sizeof(camera_arg);
+    p[n++] = 0x48; p[n++] = 0xb8; /* movabs rax, handler */
+    const uint64_t handler_address = (uint64_t)(uintptr_t)handler;
+    memcpy(p + n, &handler_address, 8); n += 8;
+    p[n++] = 0xff; p[n++] = 0xd0; /* call rax */
+
+    const unsigned restore_xmm = n;
+    p[skip_disp] = (unsigned char)(restore_xmm - (skip_disp + 1));
+    for (unsigned x = 0; x < 16; ++x) {
+        p[n++] = 0xf3;
+        if (x >= 8) p[n++] = 0x44;
+        p[n++] = 0x0f; p[n++] = 0x6f;
+        p[n++] = (unsigned char)(0x84 | ((x & 7) << 3)); p[n++] = 0x24;
+        const uint32_t offset = x * 16;
+        memcpy(p + n, &offset, 4); n += 4;
+    }
+    static const unsigned char restore[] = {
+        0x48, 0x89, 0xdc,             /* mov rsp, rbx */
+        0x5b,                         /* rbx */
+        0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, /* r11-r8 */
+        0x5f, 0x5e, 0x5a, 0x59, 0x58, 0x9d /* rdi,rsi,rdx,rcx,rax,popfq */
+    };
+    memcpy(p + n, restore, sizeof(restore)); n += sizeof(restore);
+
+    /* Re-run the original compare, then branch to the original taken/fall-through paths.
+     * The first path is the branch target 0xc4c67; the second resumes at 0xc4c28. */
+    memcpy(p + n, image + at, 4); n += 4;
+    p[n++] = 0x75; p[n++] = 0x0e; /* jne over the 14-byte absolute jump to fall-through */
+    static const unsigned char indirect_jump[] = {0xff, 0x25, 0x00, 0x00, 0x00, 0x00};
+    memcpy(p + n, indirect_jump, sizeof(indirect_jump)); n += sizeof(indirect_jump);
+    const uint64_t taken = (uint64_t)(uintptr_t)(image + 0xc4c67);
+    memcpy(p + n, &taken, 8); n += 8;
+    memcpy(p + n, indirect_jump, sizeof(indirect_jump)); n += sizeof(indirect_jump);
+    const uint64_t fallthrough = (uint64_t)(uintptr_t)(image + at + 6);
+    memcpy(p + n, &fallthrough, 8); n += 8;
+    return n;
+}
+
 static void install_u1_aim_release_hook(Segment *segments, uint64_t count, uint64_t size,
                                         unsigned char **stubs, unsigned *used) {
     if (!runtime_mouselook_u1_aim_direct()) return;
-    const uint64_t at = 0xc4c67;
-    const unsigned length = 5; /* CMP only; leave the following short JE untouched. */
-    static const unsigned char expected[] = {0x41, 0x80, 0x7f, 0x08, 0x00};
+    const uint64_t at = 0xc4c22;
+    const unsigned length = 6; /* CMP + short JE; both paths are reproduced in the stub. */
+    static const unsigned char expected[] = {0x80, 0x78, 0x1b, 0x00, 0x74, 0x3f};
     if (at + length > size || !mapped(segments, count, at, length) ||
         memcmp(image + at, expected, sizeof(expected))) {
-        puts("Mouse look: U1 aim-release hook unavailable (signature mismatch)");
+        puts("Mouse look: U1 aim-release branch hook unavailable (signature mismatch)");
         return;
     }
     if (!*stubs && !(*stubs = allocate_near_image(size))) {
-        puts("Mouse look: U1 aim-release hook unavailable (no near-image stub page)");
+        puts("Mouse look: U1 aim-release branch hook unavailable (no near-image stub page)");
         return;
     }
     if (*used + 512 > page_size) {
-        puts("Mouse look: U1 aim-release hook unavailable (stub page full)");
+        puts("Mouse look: U1 aim-release branch hook unavailable (stub page full)");
         return;
     }
-    /* camera_in_r12=0 reads the original RBX saved at [saved-frame], i.e. camera. */
-    build_u1_aim_post_stub(*stubs + *used, at, length,
-                           runtime_mouselook_u1_aim_release_camera, 0);
+    build_u1_aim_release_branch_stub(*stubs + *used, at,
+                                     runtime_mouselook_u1_aim_release_camera);
     if (!install_jump(at, length, *stubs + *used)) {
-        puts("Mouse look: U1 aim-release hook unavailable (stub out of jump range)");
+        puts("Mouse look: U1 aim-release branch hook unavailable (stub out of jump range)");
         return;
     }
     *used += 512;
-    puts("Mouse look: U1 aim release state hook ready");
+    puts("Mouse look: U1 aim release branch hook ready");
 }
 static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size) {
     if (!runtime_mouselook_enabled()) return;
