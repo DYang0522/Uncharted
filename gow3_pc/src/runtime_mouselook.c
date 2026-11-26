@@ -1356,6 +1356,8 @@ static struct {
     int held;                    /* aiming at the last call */
     float dx, dy;                /* this press's mouse turn so far (counts, game invert applied) */
     unsigned clock;              /* calls, for replacing the least recently used controller */
+    float follow_heading;         /* frozen opposite Follow2 heading for this L2 press */
+    int follow_heading_valid;
     struct {
         const unsigned char *controller;
         float dx, dy;            /* amount of press movement already applied */
@@ -1382,6 +1384,17 @@ static float u1_post_pending_dx, u1_post_pending_dy;
 static int u1_post_pending;
 static void u1_post_add_mouse(float dx, float dy);
 static void u1_post_apply(uint64_t camera, int primary);
+
+/* Align only yaw. Follow2 stores its vertical arc separately; the aim camera's own Y component
+ * is the native pitch for this camera instance and must not be replaced by Follow2's flat vector. */
+static void u1_align_aim_heading(float *dir, float heading) {
+    if (!aim_usable(dir) || !isfinite(heading)) return;
+    const float horizontal = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]);
+    if (!(horizontal > 1e-4f)) return;
+    const float angle = heading * 0.017453292f;
+    dir[0] = sinf(angle) * horizontal;
+    dir[2] = cosf(angle) * horizontal;
+}
 
 static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, void *unused, float *dir) {
     (void)out;
@@ -1418,11 +1431,8 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_pending = 0;
         ++u1_post_press_id;
 
-        /* New L2 press: seed +0x1830 from the current Follow2 view, not +0x1680.
-         * +0x1680 is only the native helper's fallback and can retain the previous aim.
-         * In U1's camera convention the fresh aim ray is opposite Follow2 +0x1310
-         * (first clean press: 104.054 degrees -> -75.946 degrees).
-         * The follow direction was snapshotted before its aim-follow offset this frame. */
+        /* Freeze the current Follow2 heading for this L2 press. Its vertical arc is a
+         * separate camera parameter, not the Y component of +0x1310. */
         const uint64_t follow_age = now_ms() - u1_follow_direction_at;
         if (u1_follow_direction_valid && follow_age <= 100) {
             const float fresh_direction[4] = {
@@ -1430,17 +1440,43 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
                 -u1_follow_direction[2], 0.0f
             };
             if (aim_usable(fresh_direction)) {
-                /* The native helper blends the RCX input with controller+0xc30
-                 * (camera+0x1680) at 0x276e32. Keep both sources in sync so stale
-                 * fallback lanes cannot restore the previous vertical component. */
-                memcpy(dir, fresh_direction, sizeof(fresh_direction));
-                memcpy(controller + 0xc30, fresh_direction, sizeof(fresh_direction));
+                u1_press.follow_heading = dir_heading(fresh_direction);
+                u1_press.follow_heading_valid = 1;
             }
         }
     }
+
+    /* Each controller instance gets the same fresh yaw once, while retaining its own
+     * native pitch. The game can swap aim-camera instances during a zoom transition. */
+    int slot = 0, found = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (u1_press.given[i].controller == controller) {
+            slot = i;
+            found = 1;
+            break;
+        }
+        if (u1_press.given[i].used < u1_press.given[slot].used) slot = i;
+    }
+    const uint64_t now = now_ms();
+    const int new_controller = !found || now - u1_press.given[slot].at > 100;
+    if (new_controller && u1_press.follow_heading_valid) {
+        u1_align_aim_heading(dir, u1_press.follow_heading);
+        u1_align_aim_heading((float *)(controller + 0xc30), u1_press.follow_heading);
+    }
     if (!aim_usable(dir)) return NULL;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
-    if (u1_post_hooks_installed && u1_aim_active_camera) u1_post_camera = u1_aim_active_camera;
+
+    /* The post-update target belongs to the active camera instance. When the game hands
+     * the active aim update to another camera, let that camera seed its own post target. */
+    if (u1_post_hooks_installed && u1_aim_active_camera &&
+        u1_post_camera != u1_aim_active_camera) {
+        u1_post_camera = u1_aim_active_camera;
+        u1_post_seeded = 0;
+        u1_post_frames = 0;
+        u1_post_last_primary_ms = 0;
+        u1_post_pending_dx = u1_post_pending_dy = 0.0f;
+        u1_post_pending = 0;
+    }
     float dx = 0, dy = 0;
     if (aim_take(&u1_aim, (const int *)(image + 0x95ca20), &dx, &dy)) {
         u1_press.dx += dx;
@@ -1455,17 +1491,7 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         }
     }
     mouse_trace("u1a", controller, 1, heading, pitch, dx, dy, dx != 0.0f || dy != 0.0f ? 'd' : '-');
-    int slot = 0, found = 0;
-    for (int i = 0; i < 4; ++i) {
-        if (u1_press.given[i].controller == controller) {
-            slot = i;
-            found = 1;
-            break;
-        }
-        if (u1_press.given[i].used < u1_press.given[slot].used) slot = i;
-    }
-    const uint64_t now = now_ms();
-    if (!found || now - u1_press.given[slot].at > 100) {
+    if (new_controller) {
         /* New or stale controllers start from now; don't replay mouse movement from earlier
          * in this aim press when the game replaces its aim controller. */
         u1_press.given[slot].controller = controller;
