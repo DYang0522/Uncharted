@@ -1350,6 +1350,7 @@ static struct {
  * The game keeps updating its own camera transition; these hooks only reapply
  * the mouse's accumulated angular offset after the final direction stores. */
 static int u1_post_hooks_installed;
+static uint64_t u1_aim_active_camera;
 static int u1_post_active;
 static int u1_post_tracking;
 static int u1_post_seeded;
@@ -1385,7 +1386,7 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_active = u1_post_hooks_installed;
         u1_post_seeded = 0;
         u1_post_frames = 0;
-        u1_post_camera = 0;
+        u1_post_camera = u1_aim_active_camera;
         u1_post_start_ms = now_ms();
         u1_post_last_primary_ms = 0;
         u1_post_pending_dx = u1_post_pending_dy = 0.0f;
@@ -1393,8 +1394,14 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         ++u1_post_press_id;
     }
     if (!aim_usable(dir)) return NULL;
-    float dx = 0, dy = 0;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
+    if (u1_post_hooks_installed && u1_aim_active_camera &&
+        (uintptr_t)controller != u1_aim_active_camera + 0xa50) {
+        mouse_trace("u1a", controller, 1, heading, pitch, 0.0f, 0.0f, 'x');
+        return NULL;
+    }
+    if (u1_post_hooks_installed && u1_aim_active_camera) u1_post_camera = u1_aim_active_camera;
+    float dx = 0, dy = 0;
     if (aim_take(&u1_aim, (const int *)(image + 0x95ca20), &dx, &dy)) {
         u1_press.dx += dx;
         u1_press.dy += dy;
@@ -1501,10 +1508,10 @@ static void u1_post_apply(uint64_t camera, int primary) {
     const float heading = dir_heading(dir);
     const float pitch = dir_pitch(dir);
 
-    if (!primary && (!u1_post_seeded || camera != u1_post_camera)) return;
+    if (camera != u1_post_camera || !u1_post_camera) return;
+    if (!primary && !u1_post_seeded) return;
     if (primary) {
         if (!u1_post_seeded) {
-            u1_post_camera = camera;
             u1_post_heading = heading;
             u1_post_pitch = pitch;
             u1_post_seeded = 1;
@@ -1563,6 +1570,9 @@ void runtime_mouselook_u1_aim_post_main(uint64_t camera) {
 }
 void runtime_mouselook_u1_aim_post_zoom(uint64_t camera) {
     u1_post_apply(camera, 0);
+}
+void runtime_mouselook_u1_aim_camera_update(uint64_t camera) {
+    if (camera) u1_aim_active_camera = camera;
 }
 void runtime_mouselook_u1_post_installed(int installed) {
     u1_post_hooks_installed = installed != 0;
