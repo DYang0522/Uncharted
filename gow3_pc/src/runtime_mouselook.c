@@ -1458,7 +1458,8 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         if (u1_press.given[i].used < u1_press.given[slot].used) slot = i;
     }
     const uint64_t now = now_ms();
-    const int new_controller = !found || now - u1_press.given[slot].at > 100;
+    const int new_controller = !found;
+    const int stale_controller = found && now - u1_press.given[slot].at > 100;
     if (new_controller && u1_press.follow_heading_valid) {
         u1_align_aim_heading(dir, u1_press.follow_heading);
         u1_align_aim_heading((float *)(controller + 0xc30), u1_press.follow_heading);
@@ -1491,7 +1492,7 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         }
     }
     mouse_trace("u1a", controller, 1, heading, pitch, dx, dy, dx != 0.0f || dy != 0.0f ? 'd' : '-');
-    if (new_controller) {
+    if (new_controller || stale_controller) {
         /* New or stale controllers start from now; don't replay mouse movement from earlier
          * in this aim press when the game replaces its aim controller. */
         u1_press.given[slot].controller = controller;
