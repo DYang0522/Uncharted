@@ -803,6 +803,9 @@ static void install_orb_multiplier(Segment *segments, uint64_t count, uint64_t s
 }
 /* Writes a jump from image+at to `stub`; the rest of the replaced bytes become nops (the stub
  * replays them). 0 when the stub is out of relative-jump range. */
+static int64_t find_unique_code(Segment *segments, uint64_t count, const char *pattern);
+static int install_u1_aim_camera_owner_hook(Segment *segments, uint64_t count, uint64_t size,
+                                             unsigned char **stubs, unsigned *used);
 static int install_jump(uint64_t at, unsigned length, unsigned char *stub) {
     const int64_t delta = (int64_t)(uintptr_t)stub - (int64_t)(uintptr_t)(image + at + 5);
     if (delta < INT32_MIN || delta > INT32_MAX) return 0;
@@ -1000,9 +1003,13 @@ static unsigned build_u1_aim_post_stub(unsigned char *p, uint64_t at, unsigned l
     return n;
 }
 static void install_u1_aim_post_hooks(Segment *segments, uint64_t count, uint64_t size,
-                                      unsigned char **stubs, unsigned *used) {
+                                      unsigned char **stubs, unsigned *used, int owner_installed) {
     runtime_mouselook_u1_post_installed(0);
     if (!runtime_mouselook_aim_direct()) return;
+    if (!owner_installed) {
+        puts("Mouse look: U1 AIM_POST inactive (active aim-camera hook not found)");
+        return;
+    }
 
     /* Hardcoded U1 zoom-direction stores: 0xc50cc -> hook at 0xc50d4 (RBX camera),
      * 0xc2704 -> hook at 0xc270e (R12 camera). No version detection is performed. */
@@ -1044,6 +1051,12 @@ static void install_u1_aim_post_hooks(Segment *segments, uint64_t count, uint64_
     if (installed != 2)
         printf("Mouse look: U1 AIM_POST inactive (%u/2 hooks installed)\n", installed);
 }
+static ABI void *u1_aim_camera_owner_input(unsigned char *buffer, unsigned char *camera, void *image_arg) {
+    (void)buffer;
+    (void)image_arg;
+    if (camera) runtime_mouselook_u1_aim_camera_update((uint64_t)(uintptr_t)camera);
+    return NULL;
+}
 static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size) {
     if (!runtime_mouselook_enabled()) return;
     unsigned n = 0, used = 0, installed = 0;
@@ -1069,7 +1082,8 @@ static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size)
         used += 256;
         ++installed;
     }
-    install_u1_aim_post_hooks(segments, count, size, &stubs, &used);
+    const int owner_installed = install_u1_aim_camera_owner_hook(segments, count, size, &stubs, &used);
+    install_u1_aim_post_hooks(segments, count, size, &stubs, &used, owner_installed);
     if (stubs) protect(stubs, page_size, 5);
     if (!installed) puts("Mouse look: no known camera code in this executable (mouse acts as the right stick)");
     else runtime_mouselook_install_patches(); /* gow3 1 Nov 2026 */
@@ -1102,6 +1116,43 @@ static int64_t find_unique_code(Segment *segments, uint64_t count, const char *p
         }
     }
     return found;
+}
+/* Zorde's U1 aim-camera wrapper is the outer update that supplies the actual camera object in RSI.
+ * Hooking it avoids treating every inner 0x276a10 controller invocation as the displayed camera. */
+static int install_u1_aim_camera_owner_hook(Segment *segments, uint64_t count, uint64_t size,
+                                             unsigned char **stubs, unsigned *used) {
+    if (!runtime_mouselook_aim_direct()) return 0;
+    static const char pattern[] =
+        "55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 68 02 00 00 "
+        "49 89 d7 48 89 f3 49 89 fe 4c ?? 2d";
+    const int64_t found = find_unique_code(segments, count, pattern);
+    static const unsigned char expected[] = {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57};
+    if (found < 0 || !mapped(segments, count, (uint64_t)found, sizeof(expected)) ||
+        memcmp(image + found, expected, sizeof(expected))) {
+        puts("Mouse look: U1 active aim-camera hook unavailable (signature not found uniquely)");
+        return 0;
+    }
+    if (!*stubs && !(*stubs = allocate_near_image(size))) {
+        puts("Mouse look: U1 active aim-camera hook unavailable (no near-image stub page)");
+        return 0;
+    }
+    if (*used + 256 > page_size) {
+        puts("Mouse look: U1 active aim-camera hook unavailable (stub page full)");
+        return 0;
+    }
+    MouseLookSite site = {
+        "Uncharted 1 (active aim-camera update)", (uint64_t)found, 6,
+        {0x55, 0x48, 0x89, 0xe5, 0x41, 0x57}, 6,
+        (void *)u1_aim_camera_owner_input
+    };
+    build_mouse_look_stub(*stubs + *used, &site, (uintptr_t)(image + found + site.length));
+    if (!install_jump((uint64_t)found, site.length, *stubs + *used)) {
+        puts("Mouse look: U1 active aim-camera hook unavailable (stub out of jump range)");
+        return 0;
+    }
+    *used += 256;
+    printf("Mouse look: U1 active aim-camera owner at image offset %#llx\\n", (unsigned long long)found);
+    return 1;
 }
 /* gow3 4 Nov 2026: Uncharted 1 physics above 60 FPS (1.02, EU and US). The rigid-body integrator
  * holds still any body slower than "Sticky Speed" / "Sticky Omega" (0.1, the game's own names; US
