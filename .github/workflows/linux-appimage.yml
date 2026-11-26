@@ -17,10 +17,25 @@ jobs:
       image: ubuntu:26.04
       options: --user root
     timeout-minutes: 180
+    env:
+      CCACHE_DIR: ${{ runner.temp }}/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPILERCHECK: content
 
     steps:
+      - name: Restore APT package archives
+        uses: actions/cache/restore@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ubuntu-26.04-apt-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-26.04-apt-
+
       - name: Prepare container for checkout
         run: |
+          # Keep downloaded .deb files so the workflow cache can reuse them.
+          rm -f /etc/apt/apt.conf.d/docker-clean
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git rsync
 
@@ -42,8 +57,32 @@ jobs:
           cat /etc/os-release
           apt-config dump | grep -i 'Architecture-Variants' || true
 
+      - name: Restore prebuilt native dependencies
+        id: native-deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /usr/local
+          key: ubuntu-26.04-native-deps-${{ hashFiles('gow3_pc/packaging/linux/ci-deps.sh') }}
+
       - name: Install native Linux build dependencies
+        env:
+          GOW3_NATIVE_DEPS_CACHE_HIT: ${{ steps.native-deps-cache.outputs.cache-hit }}
         run: bash gow3_pc/packaging/linux/ci-deps.sh
+
+      - name: Save prebuilt native dependencies
+        if: steps.native-deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /usr/local
+          key: ubuntu-26.04-native-deps-${{ hashFiles('gow3_pc/packaging/linux/ci-deps.sh') }}
+
+      - name: Restore C/C++ compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ubuntu-26.04-ccache-${{ github.run_id }}
+          restore-keys: |
+            ubuntu-26.04-ccache-
 
       - name: Build Linux runtime
         env:
@@ -77,6 +116,13 @@ jobs:
           mkdir -p "$HOME/.local/share"
           bash gow3_pc/build.sh --test
 
+      - name: Save C/C++ compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ubuntu-26.04-ccache-${{ github.run_id }}
+
       - name: Install relocatable Python for the AppImage
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
@@ -94,26 +140,47 @@ jobs:
           "$python_standalone/bin/python3" -c 'import tkinter; print("Tk:", tkinter.TkVersion)'
           echo "PYTHON_STANDALONE=$python_standalone" >> "$GITHUB_ENV"
 
+      - name: Restore AppImage tooling cache
+        id: appimage-tool-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/appimage-tools
+          key: ubuntu-26.04-appimage-tools-v1
+
       - name: Fetch pinned AppImage tooling
         run: |
           set -euo pipefail
-          appimagetool="$RUNNER_TEMP/appimagetool-x86_64.AppImage"
-          runtime="$RUNNER_TEMP/runtime-x86_64"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
-            --output "$appimagetool"
+          tool_cache="$RUNNER_TEMP/appimage-tools"
+          mkdir -p "$tool_cache"
+          appimagetool="$tool_cache/appimagetool-x86_64.AppImage"
+          runtime="$tool_cache/runtime-x86_64"
+          if [[ ! -s "$appimagetool" ]]; then
+            curl --fail --location --retry 3 --retry-delay 2 \
+              https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
+              --output "$appimagetool"
+          fi
           echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  $appimagetool" | sha256sum --check
           chmod +x "$appimagetool"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
-            --output "$runtime"
+          if [[ ! -s "$runtime" ]]; then
+            curl --fail --location --retry 3 --retry-delay 2 \
+              https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
+              --output "$runtime"
+          fi
           echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  $runtime" | sha256sum --check
           chmod +x "$runtime"
-          cd "$RUNNER_TEMP"
-          "$appimagetool" --appimage-extract >/dev/null
-          test -x "$RUNNER_TEMP/squashfs-root/AppRun"
-          echo "APPIMAGETOOL=$RUNNER_TEMP/squashfs-root/AppRun" >> "$GITHUB_ENV"
+          if [[ ! -x "$tool_cache/squashfs-root/AppRun" ]]; then
+            (cd "$tool_cache" && "$appimagetool" --appimage-extract >/dev/null)
+          fi
+          test -x "$tool_cache/squashfs-root/AppRun"
+          echo "APPIMAGETOOL=$tool_cache/squashfs-root/AppRun" >> "$GITHUB_ENV"
           echo "APPIMAGE_RUNTIME=$runtime" >> "$GITHUB_ENV"
+
+      - name: Save AppImage tooling cache
+        if: steps.appimage-tool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/appimage-tools
+          key: ubuntu-26.04-appimage-tools-v1
 
       - name: Assemble Linux AppImage
         run: |
@@ -146,3 +213,10 @@ jobs:
             ${{ runner.temp }}/gpu-ldd.txt
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Save APT package archives
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ubuntu-26.04-apt-${{ github.run_id }}
