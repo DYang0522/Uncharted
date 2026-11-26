@@ -1370,7 +1370,9 @@ static struct {
     float dx, dy;                /* this press's mouse turn so far (counts, game invert applied) */
     unsigned clock;              /* calls, for replacing the least recently used controller */
     float follow_heading;         /* frozen opposite Follow2 heading for this L2 press */
+    float follow_pitch;            /* last rendered camera pitch, oriented along the aim ray */
     int follow_heading_valid;
+    int follow_pitch_valid;
     struct {
         const unsigned char *controller;
         float dx, dy;            /* amount of press movement already applied */
@@ -1441,14 +1443,20 @@ static void u1_trace_aim_sources(const unsigned char *controller, const float *d
     const float aim_p = aim_usable(dir) ? dir_pitch(dir) : NAN;
     const float follow_h = follow_fresh ? dir_heading(u1_follow_direction) : NAN;
     const float follow_p = follow_fresh ? dir_pitch(u1_follow_direction) : NAN;
+    float view_h = NAN, view_p = NAN;
+    double view_age = NAN;
+    const int view_valid = gow3gpu_camera_direction(&view_h, &view_p, &view_age);
     fprintf(trace_file,
             "%.4f u1v ctrl=%p aim_camera=%p reason=%c fallback_h=%.3f fallback_p=%.3f "
             "aim_h=%.3f aim_p=%.3f follow_camera=%p follow_h=%.3f follow_p=%.3f "
-            "follow_arc=%.5f follow_age_ms=%llu\n",
+            "follow_arc=%.5f follow_age_ms=%llu view_valid=%d view_h=%.3f view_p=%.3f view_age_ms=%.1f "
+            "press_pitch=%.3f press_pitch_valid=%d\n",
             wall_seconds(), (const void *)controller, (const void *)(uintptr_t)u1_aim_active_camera, reason,
             fallback_h, fallback_p, aim_h, aim_p, (const void *)u1_follow_camera, follow_h, follow_p,
             u1_follow_camera ? u1_follow_arc : NAN,
-            (unsigned long long)(age == UINT64_MAX ? 0 : age));
+            (unsigned long long)(age == UINT64_MAX ? 0 : age),
+            view_valid, view_h, view_p, view_age * 1000.0,
+            u1_press.follow_pitch, u1_press.follow_pitch_valid);
     trace_flush();
 }
 
@@ -1500,6 +1508,18 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
                 u1_press.follow_heading_valid = 1;
             }
         }
+        float view_heading = 0.0f, view_pitch = 0.0f;
+        double view_age = 0.0;
+        if (u1_press.follow_heading_valid &&
+            gow3gpu_camera_direction(&view_heading, &view_pitch, &view_age) &&
+            isfinite(view_heading) && isfinite(view_pitch) &&
+            view_age >= 0.0 && view_age <= 0.100) {
+            const float view_to_aim = fabsf(wrap_degrees(view_heading - u1_press.follow_heading));
+            /* The velocity pass records the last rendered world-space forward vector.
+             * Choose its pitch sign from the known Follow2-to-aim yaw convention. */
+            u1_press.follow_pitch = view_to_aim <= 90.0f ? view_pitch : -view_pitch;
+            u1_press.follow_pitch_valid = 1;
+        }
         u1_trace_aim_sources(controller, dir, 'p');
     }
 
@@ -1519,41 +1539,27 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     const int stale_controller = found && now - u1_press.given[slot].at > 100;
     const int camera_changed = u1_post_hooks_installed && u1_aim_active_camera &&
                               u1_post_camera != u1_aim_active_camera;
-    /* Carry yaw across camera replacement, but rebase pitch against the incoming camera's
-     * native direction. Reapply only this L2 press's accumulated vertical mouse delta; never
-     * transplant the outgoing camera's absolute pitch onto a different camera object. */
-    const int carry_heading = u1_post_seeded;
+    /* The aim target is press-scoped, not camera-instance-scoped. A replacement aim camera
+     * inherits the already displayed yaw and pitch; its freshly rebuilt +0x1830 can be a
+     * temporary native baseline that does not represent the visible aim direction. */
+    const int carry_target = u1_post_seeded;
     const float carried_heading = u1_post_heading;
     const float carried_pitch = u1_post_pitch;
-    const int incoming_has_carried_angles =
-        carry_heading && aim_usable(dir) &&
-        fabsf(wrap_degrees(dir_heading(dir) - carried_heading)) < 3.0f &&
-        fabsf(dir_pitch(dir) - carried_pitch) < 3.0f;
     if (camera_changed) {
         u1_post_camera = u1_aim_active_camera;
-        u1_post_seeded = 0;
-        u1_post_frames = 0;
-        u1_post_last_primary_ms = 0;
-        u1_post_pending_dx = u1_post_pending_dy = 0.0f;
-        u1_post_pending = 0;
+        /* Keep the seeded target, frame accounting and pending mouse movement across swaps. */
         u1_trace_aim_sources(controller, dir, 'c');
     } else if (new_controller && u1_post_seeded) {
         u1_trace_aim_sources(controller, dir, 'n');
     }
     if ((new_controller || camera_changed) && u1_press.follow_heading_valid) {
-        float target_heading;
-        if (carry_heading) {
-            target_heading = carried_heading;
-        } else {
-            target_heading = u1_press.follow_heading -
-                             u1_press.dx * look_scale() * 57.29578f;
-        }
+        float target_heading = carry_target ? carried_heading : u1_press.follow_heading;
         while (target_heading > 180.0f) target_heading -= 360.0f;
         while (target_heading < -180.0f) target_heading += 360.0f;
-        float target_pitch = incoming_has_carried_angles
-                                 ? dir_pitch(dir)
-                                 : dir_pitch(dir) -
-                                       u1_press.dy * look_scale() * 57.29578f * look_invert();
+        float target_pitch = carry_target
+                                 ? carried_pitch
+                                 : (u1_press.follow_pitch_valid ? u1_press.follow_pitch
+                                                                : dir_pitch(dir));
         if (target_pitch < -70.0f) target_pitch = -70.0f;
         if (target_pitch > 70.0f) target_pitch = 70.0f;
         u1_align_aim_camera_vectors((unsigned char *)controller - 0xa50, dir,

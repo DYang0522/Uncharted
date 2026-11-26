@@ -286,6 +286,7 @@ bool CameraMotion::IsVelocityShader(u64 ps_hash) const noexcept {
 // gow3: the heading (degrees) of the camera the game last rendered with, and when (seconds,
 // steady clock).
 static std::atomic<float> shown_camera_yaw{0.0f};
+static std::atomic<float> shown_camera_pitch{0.0f};
 static std::atomic<double> shown_camera_time{0.0};
 
 extern "C" int gow3gpu_camera_yaw(float* yaw_degrees, double* age_seconds) {
@@ -297,6 +298,22 @@ extern "C" int gow3gpu_camera_yaw(float* yaw_degrees, double* age_seconds) {
     *age_seconds = std::chrono::duration<double>(
                        std::chrono::steady_clock::now().time_since_epoch()).count() - t;
     return 1;
+}
+
+extern "C" int gow3gpu_camera_direction(float* yaw_degrees, float* pitch_degrees,
+                                         double* age_seconds) {
+    if (!yaw_degrees || !pitch_degrees || !age_seconds) {
+        return 0;
+    }
+    const double t = shown_camera_time.load(std::memory_order_acquire);
+    if (t == 0.0) {
+        return 0;
+    }
+    *yaw_degrees = shown_camera_yaw.load(std::memory_order_relaxed);
+    *pitch_degrees = shown_camera_pitch.load(std::memory_order_relaxed);
+    *age_seconds = std::chrono::duration<double>(
+                       std::chrono::steady_clock::now().time_since_epoch()).count() - t;
+    return std::isfinite(*yaw_degrees) && std::isfinite(*pitch_degrees);
 }
 
 void CameraMotion::OnVelocityConstants(const float* c, u32 dwords) {
@@ -330,8 +347,11 @@ void CameraMotion::OnVelocityConstants(const float* c, u32 dwords) {
     const float fx = c[14], fy = c[18], fz = c[22];
     const double t = std::chrono::duration<double>(
                          std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (std::isfinite(fx) && std::isfinite(fz) && (fx != 0.0f || fz != 0.0f)) {
+    const float horizontal = std::sqrt(fx * fx + fz * fz);
+    const float length = std::sqrt(horizontal * horizontal + fy * fy);
+    if (std::isfinite(fx) && std::isfinite(fy) && std::isfinite(fz) && length > 1e-4f) {
         shown_camera_yaw.store(std::atan2(fx, fz) * 57.29578f, std::memory_order_relaxed);
+        shown_camera_pitch.store(std::atan2(fy, horizontal) * 57.29578f, std::memory_order_relaxed);
         shown_camera_time.store(t, std::memory_order_release);
     }
     static const bool camera_log = std::getenv("GOW3_CAMERA_LOG") != nullptr;

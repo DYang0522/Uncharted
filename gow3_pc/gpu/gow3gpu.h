@@ -98,6 +98,8 @@ unsigned gow3gpu_controls_generation(void);
 void gow3gpu_controls_get(Gow3Controls *out);
 /* Live values for the camera hooks (src/runtime_mouselook.c). */
 float gow3gpu_controls_mouse_sens(void);
+/* Most recently rendered scene-camera forward direction; age is steady-clock seconds. */
+int gow3gpu_camera_direction(float *yaw_degrees, float *pitch_degrees, double *age_seconds);
 /* gow3 20 Oct 2026: while aiming (times mouse_sens), up/down compared with left/right, invert left/right. */
 float gow3gpu_controls_mouse_aim_sens(void);
 float gow3gpu_controls_mouse_vertical(void);
