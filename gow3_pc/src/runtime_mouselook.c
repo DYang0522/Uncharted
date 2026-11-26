@@ -1398,7 +1398,6 @@ static int u1_post_pending;
 static void u1_post_add_mouse(float dx, float dy);
 static void u1_post_apply(uint64_t camera, int primary);
 static float wrap_degrees(float value);
-static void u1_post_write_angles(float *dir, float target_heading_degrees, float target_pitch_degrees);
 
 /* Apply an angular delta to a native U1 direction vector, retaining its length and any
  * camera-specific offset. Follow2's +0x12bc arc is not pitch; these fields are the aim
@@ -1651,12 +1650,12 @@ static void u1_post_set_heading(float *dir, float target_heading) {
     dir[0] = x * c + z * s;
     dir[2] = z * c - x * s;
 }
-static void u1_post_write_angles(float *dir, float target_heading_degrees, float target_pitch_degrees) {
-    if (!dir || !isfinite(target_heading_degrees) || !isfinite(target_pitch_degrees)) return;
+static void u1_post_write_direction(float *dir) {
     const float len2 = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
     const float horizontal2 = dir[0] * dir[0] + dir[2] * dir[2];
     if (!(len2 > 0.92f && len2 < 1.08f) || !(horizontal2 > 1e-4f)) return;
-    const float yaw = wrap_degrees(target_heading_degrees - dir_heading(dir)) * 0.017453292f;
+    const float heading = dir_heading(dir);
+    const float yaw = wrap_degrees(u1_post_heading - heading) * 0.017453292f;
     const float c = cosf(yaw), s = sinf(yaw);
     const float x = dir[0], z = dir[2];
     const float nx = x * c + z * s;
@@ -1664,17 +1663,11 @@ static void u1_post_write_angles(float *dir, float target_heading_degrees, float
     const float horizontal = sqrtf(nx * nx + nz * nz);
     if (!(horizontal > 1e-4f)) return;
     const float length = sqrtf(len2);
-    float target_pitch = target_pitch_degrees;
-    if (target_pitch < -70.0f) target_pitch = -70.0f;
-    if (target_pitch > 70.0f) target_pitch = 70.0f;
-    const float pitch = target_pitch * 0.017453292f;
-    const float cp = cosf(pitch) * length / horizontal;
+    const float target_pitch = u1_post_pitch * 0.017453292f;
+    const float cp = cosf(target_pitch) * length / horizontal;
     dir[0] = nx * cp;
     dir[2] = nz * cp;
-    dir[1] = sinf(pitch) * length;
-}
-static void u1_post_write_direction(float *dir) {
-    u1_post_write_angles(dir, u1_post_heading, u1_post_pitch);
+    dir[1] = sinf(target_pitch) * length;
 }
 static void u1_post_apply(uint64_t camera, int primary) {
     if (!u1_post_active || !runtime_pad_aim_held() || !camera) return;
@@ -1761,34 +1754,14 @@ void runtime_mouselook_u1_post_installed(int installed) {
 
 /* Follow and Cover keep their own offsets while the camera blend follows the zoom camera. */
 static void u1_follow_follows_aim(float *dir) {
-    static struct {
-        float *dir;
-        uint64_t press_id;
-        float heading_offset, pitch_offset;
-        unsigned used;
-    } offsets[4];
-    static unsigned clock;
+    static uint64_t offset_press;
+    static float offset;
     if (!u1_post_tracking || !u1_post_seeded || !runtime_pad_aim_held() || !dir) return;
-
-    unsigned slot = 0;
-    int found = 0;
-    for (unsigned i = 0; i < 4; ++i) {
-        if (offsets[i].dir == dir) {
-            slot = i;
-            found = 1;
-            break;
-        }
-        if (!offsets[i].dir || offsets[i].used < offsets[slot].used) slot = i;
+    if (offset_press != u1_post_press_id) {
+        offset_press = u1_post_press_id;
+        offset = wrap_degrees(dir_heading(dir) - u1_post_heading);
     }
-    if (!found || offsets[slot].press_id != u1_post_press_id) {
-        offsets[slot].dir = dir;
-        offsets[slot].press_id = u1_post_press_id;
-        offsets[slot].heading_offset = wrap_degrees(dir_heading(dir) - u1_post_heading);
-        offsets[slot].pitch_offset = dir_pitch(dir) - u1_post_pitch;
-    }
-    offsets[slot].used = ++clock;
-    u1_post_write_angles(dir, wrap_degrees(u1_post_heading + offsets[slot].heading_offset),
-                         u1_post_pitch + offsets[slot].pitch_offset);
+    u1_post_set_heading(dir, wrap_degrees(u1_post_heading + offset));
 }
 static void u1_cover_follows_aim(float *dir, float *pitch, float lo, float hi) {
     static uint64_t offset_press;
