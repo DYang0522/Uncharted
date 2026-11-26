@@ -1475,10 +1475,9 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     const float carried_heading = u1_post_heading;
     if (camera_changed) {
         u1_post_camera = u1_aim_active_camera;
-        u1_post_seeded = 0;
-        u1_post_frames = 0;
-        u1_post_last_primary_ms = 0;
-        /* Do not discard pending mouse movement; the incoming camera must consume it. */
+        /* Match the continuous Build #100 handoff: keep the post target seeded across
+         * camera-instance changes so live mouse deltas are applied immediately, not queued
+         * until the replacement camera seeds itself. */
     }
     if ((new_controller || camera_changed) && u1_press.follow_heading_valid) {
         float target_heading;
