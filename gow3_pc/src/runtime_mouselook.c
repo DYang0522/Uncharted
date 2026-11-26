@@ -1466,13 +1466,10 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     return NULL;
 }
 
-/* The game skips 0x276a10 when L2 is released, so its handler cannot clear
- * u1_press. This hook runs at the caller's common exit (0xc4c67), including
- * the branch that skips 0x276a10. It only resets MOD press state; the actual
- * camera +0x1830 direction is re-seeded from controller +0xc30 on next press. */
+/* Called only when the game's CMP/JE branch at 0xc4c22 skips 0x276a10.
+ * The branch itself is the release signal, so do not gate this on the separately sampled pad state. */
 void runtime_mouselook_u1_aim_release_camera(uint64_t camera) {
     (void)camera;
-    if (runtime_pad_aim_held()) return;
 
     u1_press.held = 0;
     u1_press.dx = u1_press.dy = 0.0f;
