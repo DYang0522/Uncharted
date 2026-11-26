@@ -1387,6 +1387,13 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     (void)out;
     (void)unused;
     if (!u1_aim_enabled() || !controller || !dir) return NULL;
+    if (u1_post_hooks_installed && u1_aim_active_camera &&
+        (uintptr_t)controller != u1_aim_active_camera + 0xa50) {
+        const float heading = aim_usable(dir) ? dir_heading(dir) : 0.0f;
+        const float pitch = aim_usable(dir) ? dir_pitch(dir) : 0.0f;
+        mouse_trace("u1a", controller, 1, heading, pitch, 0.0f, 0.0f, 'x');
+        return NULL;
+    }
     if (!runtime_pad_aim_held()) {
         u1_press.held = 0;
         u1_post_active = 0;
@@ -1422,17 +1429,17 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
                 -u1_follow_direction[0], -u1_follow_direction[1],
                 -u1_follow_direction[2], 0.0f
             };
-            if (aim_usable(fresh_direction))
+            if (aim_usable(fresh_direction)) {
+                /* The native helper blends the RCX input with controller+0xc30
+                 * (camera+0x1680) at 0x276e32. Keep both sources in sync so stale
+                 * fallback lanes cannot restore the previous vertical component. */
                 memcpy(dir, fresh_direction, sizeof(fresh_direction));
+                memcpy(controller + 0xc30, fresh_direction, sizeof(fresh_direction));
+            }
         }
     }
     if (!aim_usable(dir)) return NULL;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
-    if (u1_post_hooks_installed && u1_aim_active_camera &&
-        (uintptr_t)controller != u1_aim_active_camera + 0xa50) {
-        mouse_trace("u1a", controller, 1, heading, pitch, 0.0f, 0.0f, 'x');
-        return NULL;
-    }
     if (u1_post_hooks_installed && u1_aim_active_camera) u1_post_camera = u1_aim_active_camera;
     float dx = 0, dy = 0;
     if (aim_take(&u1_aim, (const int *)(image + 0x95ca20), &dx, &dy)) {
