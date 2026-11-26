@@ -1057,6 +1057,38 @@ static ABI void *u1_aim_camera_owner_input(unsigned char *buffer, unsigned char 
     if (camera) runtime_mouselook_u1_aim_camera_update((uint64_t)(uintptr_t)camera);
     return NULL;
 }
+
+/* U1's caller skips 0x276a10 after L2 release, but still reaches 0xc4c67.
+ * Observe that common exit to clear MOD's press latch for the next L2 press. */
+static void install_u1_aim_release_hook(Segment *segments, uint64_t count, uint64_t size,
+                                        unsigned char **stubs, unsigned *used) {
+    if (!runtime_mouselook_u1_aim_direct()) return;
+    const uint64_t at = 0xc4c67;
+    const unsigned length = 5; /* CMP only; leave the following short JE untouched. */
+    static const unsigned char expected[] = {0x41, 0x80, 0x7f, 0x08, 0x00};
+    if (at + length > size || !mapped(segments, count, at, length) ||
+        memcmp(image + at, expected, sizeof(expected))) {
+        puts("Mouse look: U1 aim-release hook unavailable (signature mismatch)");
+        return;
+    }
+    if (!*stubs && !(*stubs = allocate_near_image(size))) {
+        puts("Mouse look: U1 aim-release hook unavailable (no near-image stub page)");
+        return;
+    }
+    if (*used + 512 > page_size) {
+        puts("Mouse look: U1 aim-release hook unavailable (stub page full)");
+        return;
+    }
+    /* camera_in_r12=0 reads the original RBX saved at [saved-frame], i.e. camera. */
+    build_u1_aim_post_stub(*stubs + *used, at, length,
+                           runtime_mouselook_u1_aim_release_camera, 0);
+    if (!install_jump(at, length, *stubs + *used)) {
+        puts("Mouse look: U1 aim-release hook unavailable (stub out of jump range)");
+        return;
+    }
+    *used += 512;
+    puts("Mouse look: U1 aim release state hook ready");
+}
 static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size) {
     if (!runtime_mouselook_enabled()) return;
     unsigned n = 0, used = 0, installed = 0;
@@ -1084,6 +1116,7 @@ static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size)
     }
     const int owner_installed = install_u1_aim_camera_owner_hook(segments, count, size, &stubs, &used);
     install_u1_aim_post_hooks(segments, count, size, &stubs, &used, owner_installed);
+    install_u1_aim_release_hook(segments, count, size, &stubs, &used);
     if (stubs) protect(stubs, page_size, 5);
     if (!installed) puts("Mouse look: no known camera code in this executable (mouse acts as the right stick)");
     else runtime_mouselook_install_patches(); /* gow3 1 Nov 2026 */

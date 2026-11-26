@@ -1397,6 +1397,14 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_pending_dx = u1_post_pending_dy = 0.0f;
         u1_post_pending = 0;
         ++u1_post_press_id;
+
+        /* New L2 press: discard the previous press's remembered +0x1830 vector.
+         * The native helper's fallback is controller +0xc30 (camera +0x1680),
+         * read by the game at 0x276e32. Seed the original RCX buffer in place
+         * before the game helper reads it; keep the native pointer unchanged. */
+        const float *fresh_direction = (const float *)(controller + 0xc30);
+        if (aim_usable(fresh_direction))
+            memcpy(dir, fresh_direction, 4 * sizeof(float));
     }
     if (!aim_usable(dir)) return NULL;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
@@ -1457,6 +1465,31 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     }
     return NULL;
 }
+
+/* The game skips 0x276a10 when L2 is released, so its handler cannot clear
+ * u1_press. This hook runs at the caller's common exit (0xc4c67), including
+ * the branch that skips 0x276a10. It only resets MOD press state; the actual
+ * camera +0x1830 direction is re-seeded from controller +0xc30 on next press. */
+void runtime_mouselook_u1_aim_release_camera(uint64_t camera) {
+    (void)camera;
+    if (runtime_pad_aim_held()) return;
+
+    u1_press.held = 0;
+    u1_press.dx = u1_press.dy = 0.0f;
+    u1_press.clock = 0;
+    memset(u1_press.given, 0, sizeof(u1_press.given));
+
+    u1_post_active = 0;
+    u1_post_tracking = 0;
+    u1_post_seeded = 0;
+    u1_post_frames = 0;
+    u1_post_last_primary_ms = 0;
+    u1_post_pending_dx = u1_post_pending_dy = 0.0f;
+    u1_post_pending = 0;
+    u1_post_camera = 0;
+    u1_post_start_ms = 0;
+}
+
 static float wrap_degrees(float value) {
     while (value > 180.0f) value -= 360.0f;
     while (value < -180.0f) value += 360.0f;

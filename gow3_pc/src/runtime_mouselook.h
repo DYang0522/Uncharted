@@ -40,4 +40,6 @@ void runtime_mouselook_u1_aim_post_main(uint64_t camera);
 void runtime_mouselook_u1_aim_post_zoom(uint64_t camera);
 /* The outer U1 aim-camera update identifies the one camera whose direction is displayed. */
 void runtime_mouselook_u1_aim_camera_update(uint64_t camera);
+/* Observe L2 release at the U1 aim caller's common exit. */
+void runtime_mouselook_u1_aim_release_camera(uint64_t camera);
 void runtime_mouselook_u1_post_installed(int installed);
