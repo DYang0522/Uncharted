@@ -14,6 +14,7 @@
 
 static unsigned char *image;
 static int aim_direct_enabled;
+static int u1_aim_direct_enabled;
 static void u1_follow_follows_aim(float *dir);
 static void u1_cover_follows_aim(float *dir, float *pitch, float lo, float hi);
 
@@ -1326,13 +1327,17 @@ static int u1_aim_enabled(void) {
  * direct aim-camera consumer was actually installed and enabled. */
 void runtime_mouselook_site_installed(uint64_t offset) {
     switch (offset) {
-    case 0x276a10: aim_direct_enabled = u1_aim_enabled(); break;
+    case 0x276a10:
+        aim_direct_enabled = u1_aim_enabled();
+        u1_aim_direct_enabled = aim_direct_enabled;
+        break;
     case 0x450e40: aim_direct_enabled = u2_aim_enabled(); break;
     case 0x511370: aim_direct_enabled = u3_aim_enabled(); break;
     default: break;
     }
 }
 int runtime_mouselook_aim_direct(void) { return aim_direct_enabled; }
+int runtime_mouselook_u1_aim_direct(void) { return u1_aim_direct_enabled; }
 static U1Look u1_aim = {.name = "U1 aim"};
 static struct {
     int held;                    /* aiming at the last call */
@@ -1520,9 +1525,6 @@ static void u1_post_apply(uint64_t camera, int primary) {
                 u1_post_pending_dx = u1_post_pending_dy = 0.0f;
                 u1_post_pending = 0;
             }
-        } else if (camera != u1_post_camera) {
-            /* A replacement zoom camera inherits this press's wanted direction. */
-            u1_post_camera = camera;
         }
     }
     if (camera != u1_post_camera) return;
