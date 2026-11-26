@@ -1461,8 +1461,14 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     const int new_controller = !found;
     const int stale_controller = found && now - u1_press.given[slot].at > 100;
     if (new_controller && u1_press.follow_heading_valid) {
-        u1_align_aim_heading(dir, u1_press.follow_heading);
-        u1_align_aim_heading((float *)(controller + 0xc30), u1_press.follow_heading);
+        /* Carry forward mouse yaw already applied during this press; a replacement
+         * camera must not snap back to the original L2-down heading. */
+        float target_heading = u1_press.follow_heading -
+                               u1_press.dx * look_scale() * 57.29578f;
+        while (target_heading > 180.0f) target_heading -= 360.0f;
+        while (target_heading < -180.0f) target_heading += 360.0f;
+        u1_align_aim_heading(dir, target_heading);
+        u1_align_aim_heading((float *)(controller + 0xc30), target_heading);
     }
     if (!aim_usable(dir)) return NULL;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
