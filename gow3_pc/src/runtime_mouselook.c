@@ -669,6 +669,13 @@ static void u1_follow_turn(unsigned char *camera, float *dir, const float *tune,
             }
         }
     }
+    /* Snapshot after the follow camera has consumed this frame's mouse turn. A new L2
+     * press on the same frame must start from the direction the player actually sees. */
+    if (newest) {
+        memcpy(u1_follow_direction, dir, sizeof(u1_follow_direction));
+        u1_follow_direction_at = now_ms();
+        u1_follow_direction_valid = 1;
+    }
 }
 /* gow3 1 Nov 2026 (near walls): the follow update 0xaff80 keeps the direction it starts with (at
  * 0xb0024) and, after the stick step (vtable +0x168, 0xaac90, called at 0xb01fc), measures how far the
@@ -1462,20 +1469,25 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     const int stale_controller = found && now - u1_press.given[slot].at > 100;
     const int camera_changed = u1_post_hooks_installed && u1_aim_active_camera &&
                               u1_post_camera != u1_aim_active_camera;
+    /* Keep the outgoing camera's corrected heading before resetting this instance's
+     * post seed. It is the continuity target for the incoming camera. */
+    const int carry_heading = u1_post_seeded;
+    const float carried_heading = u1_post_heading;
     if (camera_changed) {
-        /* The post-update target belongs to the active camera instance. */
         u1_post_camera = u1_aim_active_camera;
         u1_post_seeded = 0;
         u1_post_frames = 0;
         u1_post_last_primary_ms = 0;
-        u1_post_pending_dx = u1_post_pending_dy = 0.0f;
-        u1_post_pending = 0;
+        /* Do not discard pending mouse movement; the incoming camera must consume it. */
     }
     if ((new_controller || camera_changed) && u1_press.follow_heading_valid) {
-        /* Carry forward mouse yaw already applied during this press; every active camera
-         * in the transition must agree without overwriting its own native pitch. */
-        float target_heading = u1_press.follow_heading -
-                               u1_press.dx * look_scale() * 57.29578f;
+        float target_heading;
+        if (carry_heading) {
+            target_heading = carried_heading;
+        } else {
+            target_heading = u1_press.follow_heading -
+                             u1_press.dx * look_scale() * 57.29578f;
+        }
         while (target_heading > 180.0f) target_heading -= 360.0f;
         while (target_heading < -180.0f) target_heading += 360.0f;
         u1_align_aim_heading(dir, target_heading);
