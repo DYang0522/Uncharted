@@ -17,11 +17,6 @@ jobs:
       image: ubuntu:26.04
       options: --user root
     timeout-minutes: 180
-    env:
-      CCACHE_DIR: ${{ runner.temp }}/ccache
-      CCACHE_BASEDIR: ${{ github.workspace }}
-      CCACHE_MAXSIZE: 2G
-      CCACHE_COMPILERCHECK: content
 
     steps:
       - name: Restore APT package archives
@@ -36,7 +31,7 @@ jobs:
         run: |
           # Keep downloaded .deb files so the workflow cache can reuse them.
           rm -f /etc/apt/apt.conf.d/docker-clean
-          mkdir -p "$CCACHE_DIR" /var/cache/apt/archives
+          mkdir -p "$RUNNER_TEMP/ccache" /var/cache/apt/archives
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git rsync
 
@@ -92,6 +87,10 @@ jobs:
           GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
           CC: gcc-14
           CXX: g++-14
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
         run: |
           gcc --version
           g++ --version
@@ -113,6 +112,10 @@ jobs:
           GOW3_VULKAN_INCLUDE_DIR: /usr/local/include
           CC: gcc-14
           CXX: g++-14
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
         run: |
           mkdir -p "$HOME/.local/share"
           bash gow3_pc/build.sh --test
