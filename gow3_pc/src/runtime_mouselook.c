@@ -510,6 +510,12 @@ typedef struct {
     double taken[2];             /* mouse counts turned, for the debug lines */
 } U1Look;
 static U1Look u1_follow = {.name = "follow"}, u1_cover = {.name = "cover"};
+/* Latest raw Follow2 direction, before U1's aim-follow offset is applied.
+ * A fresh U1 aim ray is the opposite vector (confirmed by mouse traces). */
+static float u1_follow_direction[4];
+static uint64_t u1_follow_direction_at;
+static int u1_follow_direction_valid;
+
 static float wrap_angle(float a) {
     while (a > 3.14159265f) a -= 6.28318531f;
     while (a < -3.14159265f) a += 6.28318531f;
@@ -763,6 +769,13 @@ static ABI void *u1_follow_camera_input(unsigned char *location, unsigned char *
     if (!u1_enabled() || !camera || !params) return NULL;
     u1_apply_pending(camera, 1); /* a turn its last stick step did not take */
     float *dir = (float *)(camera + 0x1310);
+    /* Snapshot the newest Follow2 direction before the aim-follow blend can modify it.
+     * The aim-input hook runs later in this camera frame. */
+    if (params[0x08]) {
+        memcpy(u1_follow_direction, dir, sizeof(u1_follow_direction));
+        u1_follow_direction_at = now_ms();
+        u1_follow_direction_valid = 1;
+    }
     u1_follow_follows_aim(dir);
     const float *tune = *(const float *const *)(camera + 0x1e0);
     const int usable = tune && u1_follow_usable(dir);
@@ -1398,13 +1411,20 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_pending = 0;
         ++u1_post_press_id;
 
-        /* New L2 press: discard the previous press's remembered +0x1830 vector.
-         * The native helper's fallback is controller +0xc30 (camera +0x1680),
-         * read by the game at 0x276e32. Seed the original RCX buffer in place
-         * before the game helper reads it; keep the native pointer unchanged. */
-        const float *fresh_direction = (const float *)(controller + 0xc30);
-        if (aim_usable(fresh_direction))
-            memcpy(dir, fresh_direction, 4 * sizeof(float));
+        /* New L2 press: seed +0x1830 from the current Follow2 view, not +0x1680.
+         * +0x1680 is only the native helper's fallback and can retain the previous aim.
+         * In U1's camera convention the fresh aim ray is opposite Follow2 +0x1310
+         * (first clean press: 104.054 degrees -> -75.946 degrees).
+         * The follow direction was snapshotted before its aim-follow offset this frame. */
+        const uint64_t follow_age = now_ms() - u1_follow_direction_at;
+        if (u1_follow_direction_valid && follow_age <= 100) {
+            const float fresh_direction[4] = {
+                -u1_follow_direction[0], -u1_follow_direction[1],
+                -u1_follow_direction[2], 0.0f
+            };
+            if (aim_usable(fresh_direction))
+                memcpy(dir, fresh_direction, sizeof(fresh_direction));
+        }
     }
     if (!aim_usable(dir)) return NULL;
     const float heading = dir_heading(dir), pitch = dir_pitch(dir);
