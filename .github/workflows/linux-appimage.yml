@@ -213,6 +213,7 @@ jobs:
           key: ubuntu-26.04-appimage-tools-v1
 
       - name: Fetch pinned AppImage tooling
+        shell: bash
         run: |
           set -euo pipefail
           tool_cache="$RUNNER_TEMP/appimage-tools"
