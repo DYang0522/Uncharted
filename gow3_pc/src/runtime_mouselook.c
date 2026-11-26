@@ -86,8 +86,10 @@ static float look_invert(void) {
  * in degrees about +Y at the call's entry (before the mouse's turn), pitch the camera's own vertical
  * value at entry (degrees, or a 0..1 arc/curve position), dx/dy the counts it turned by, mode d
  * (direct turn), s (shared: another camera's turn of this frame), - (nothing to turn), p (the pad
- * gave the mouse to the stick). Pad reads: "<time> pad <direct> <stick x> <stick y>". Summing the
- * heading changes per camera between lines gives the real turn, with no wrap at 180 degrees. */
+ * gave the mouse to the stick). U1 post records u1p/u1z use dx/dy for the correction in degrees,
+ * and the two extra values for zoom phase (+0x1884) and post-frame count. Pad reads: "<time> pad
+ * <direct> <stick x> <stick y>". Summing the heading changes per camera between lines gives the real
+ * turn, with no wrap at 180 degrees. */
 static FILE *trace_file;
 static void trace_init(void) {
     static int done;
@@ -1351,15 +1353,12 @@ static int u1_post_hooks_installed;
 static int u1_post_active;
 static int u1_post_tracking;
 static int u1_post_seeded;
-static int u1_post_match;
-static int u1_post_written_ok;
 static unsigned u1_post_frames;
 static uint64_t u1_post_camera;
 static uint64_t u1_post_start_ms;
 static uint64_t u1_post_last_primary_ms;
 static uint64_t u1_post_press_id;
 static float u1_post_heading, u1_post_pitch;
-static float u1_post_written_heading, u1_post_written_pitch;
 static float u1_post_pending_dx, u1_post_pending_dy;
 static int u1_post_pending;
 static void u1_post_add_mouse(float dx, float dy);
@@ -1377,7 +1376,6 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_pending = 0;
         u1_post_camera = 0;
         u1_post_start_ms = 0;
-        u1_post_written_ok = 0;
         return NULL;
     }
     if (!u1_press.held) {
@@ -1386,7 +1384,6 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
         u1_post_tracking = u1_post_hooks_installed;
         u1_post_active = u1_post_hooks_installed;
         u1_post_seeded = 0;
-        u1_post_match = 0;
         u1_post_written_ok = 0;
         u1_post_frames = 0;
         u1_post_camera = 0;
@@ -1432,9 +1429,15 @@ static ABI void *u1_aim_input(unsigned char *out, unsigned char *controller, voi
     u1_press.given[slot].used = ++u1_press.clock;
     u1_press.given[slot].at = now;
     const float turn_x = u1_press.dx - u1_press.given[slot].dx, turn_y = u1_press.dy - u1_press.given[slot].dy;
-    const float per_count = look_scale();
-    if (turn_x != 0.0f) rotate_look(dir, turn_x, per_count);
-    if (turn_y != 0.0f) pitch_dir(dir, turn_y, per_count, -70.0f, 70.0f);
+    if (!u1_post_active) {
+        /* During AIM_POST the post-update hook is the sole owner of the aim direction.
+         * Applying this turn here as well races the game's zoom rebuild and causes a snap
+         * when the transition camera takes over. Keep the per-controller totals current so
+         * direct mouse turns resume from the next count after the handoff. */
+        const float per_count = look_scale();
+        if (turn_x != 0.0f) rotate_look(dir, turn_x, per_count);
+        if (turn_y != 0.0f) pitch_dir(dir, turn_y, per_count, -70.0f, 70.0f);
+    }
     u1_press.given[slot].dx = u1_press.dx;
     u1_press.given[slot].dy = u1_press.dy;
     if (look_debug()) {
@@ -1487,7 +1490,15 @@ static void u1_post_apply(uint64_t camera, int primary) {
     if (!u1_post_active || !runtime_pad_aim_held() || !camera) return;
     float *dir = (float *)(uintptr_t)(camera + 0x1830);
     const float len2 = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
-    if (!(len2 > 0.92f && len2 < 1.08f)) return;
+    if (!(len2 > 0.92f && len2 < 1.08f)) {
+        if (trace_file) {
+            trace_extra[0] = *(const float *)(uintptr_t)(camera + 0x1884);
+            trace_extra[1] = (float)u1_post_frames;
+            mouse_trace(primary ? "u1p" : "u1z", (const void *)(uintptr_t)camera,
+                        u1_post_seeded, 0.0f, 0.0f, 0.0f, 0.0f, 'x');
+        }
+        return;
+    }
     const float heading = dir_heading(dir);
     const float pitch = dir_pitch(dir);
 
@@ -1506,33 +1517,46 @@ static void u1_post_apply(uint64_t camera, int primary) {
         } else if (camera != u1_post_camera) {
             /* A replacement zoom camera inherits this press's wanted direction. */
             u1_post_camera = camera;
-            u1_post_match = 0;
-            u1_post_written_ok = 0;
         }
+    }
+    if (camera != u1_post_camera) return;
 
+    /* The game rebuilds +0x1830 during the zoom. Reapply the accumulated mouse turn
+     * after that write, without also rotating the input vector in u1_aim_input(). */
+    const float yaw_correction = wrap_degrees(u1_post_heading - heading);
+    const float pitch_correction = u1_post_pitch - pitch;
+    u1_post_write_direction(dir);
+
+    const float phase = *(const float *)(uintptr_t)(camera + 0x1884);
+    if (primary) {
         const uint64_t now = now_ms();
         const int new_frame = !u1_post_last_primary_ms || now - u1_post_last_primary_ms >= 4;
         if (new_frame) {
-            if (u1_post_written_ok) {
-                const float yaw_gap = fabsf(wrap_degrees(heading - u1_post_written_heading));
-                const float pitch_gap = fabsf(pitch - u1_post_written_pitch);
-                u1_post_match = yaw_gap < 0.3f && pitch_gap < 0.3f ? u1_post_match + 1 : 0;
-            }
             u1_post_last_primary_ms = now;
             ++u1_post_frames;
         }
+
+        /* +0x1884 is the zoom transition weight: 1.0 means its rebuild has finished.
+         * Keep post-update ownership through the whole transition; do not hand off merely
+         * because an unchanged direction happened to match for three early frames. */
+        if (isfinite(phase) && phase >= 1.0f) {
+            u1_post_active = 0;
+            printf("Mouse: U1 aim post-update handoff complete (zoom transition %.3f, %u frames, %llu ms); direct mouse retained\n",
+                   phase, u1_post_frames, (unsigned long long)(now - u1_post_start_ms));
+        } else if (now - u1_post_start_ms >= 1500) {
+            /* Safety cap for unexpected camera states; direct mouse still resumes, never the stick. */
+            u1_post_active = 0;
+            printf("Mouse: U1 aim post-update safety handoff (%u frames, %llu ms); direct mouse retained\n",
+                   u1_post_frames, (unsigned long long)(now - u1_post_start_ms));
+        }
     }
 
-    u1_post_write_direction(dir);
-    if (primary) {
-        u1_post_written_heading = dir_heading(dir);
-        u1_post_written_pitch = dir_pitch(dir);
-        u1_post_written_ok = 1;
-        if (u1_post_match >= 3) {
-            u1_post_active = 0;
-            printf("Mouse: U1 aim post-update handoff complete (%u frames, %llu ms); direct mouse retained\n",
-                   u1_post_frames, (unsigned long long)(now_ms() - u1_post_start_ms));
-        }
+    if (trace_file) {
+        trace_extra[0] = phase;
+        trace_extra[1] = (float)u1_post_frames;
+        const char mode = (fabsf(yaw_correction) >= 0.01f || fabsf(pitch_correction) >= 0.01f) ? 'w' : '-';
+        mouse_trace(primary ? "u1p" : "u1z", (const void *)(uintptr_t)camera,
+                    u1_post_seeded, heading, pitch, yaw_correction, pitch_correction, mode);
     }
 }
 void runtime_mouselook_u1_aim_post_main(uint64_t camera) {
