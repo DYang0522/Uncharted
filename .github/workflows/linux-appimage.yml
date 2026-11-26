@@ -35,10 +35,52 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git rsync
 
-      - name: Check out source and submodules
+      - name: Check out source
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Compute pinned submodule revisions
+        id: submodule-revisions
+        run: |
+          submodule_hash="$(git ls-tree -r HEAD | awk '$1 == "160000" { print $3 }' | sort | sha256sum | cut -d' ' -f1)"
+          test -n "$submodule_hash"
+          echo "hash=$submodule_hash" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Git submodule cache
+        id: submodule-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .git/modules
+            gow3_pc/gpu/third_party/fsr-vulkan
+            gow3_pc/gpu/third_party/imgui
+            gow3_pc/gpu/third_party/magic_enum
+            gow3_pc/gpu/third_party/miniz
+            gow3_pc/gpu/third_party/xbyak
+            gow3_pc/third_party/LibAtrac9
+          key: ubuntu-26.04-submodules-${{ steps.submodule-revisions.outputs.hash }}
+
+      - name: Fetch Git submodules on cache miss
+        if: steps.submodule-cache.outputs.cache-hit != 'true'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global core.autocrlf false
+          git submodule update --init --recursive
+
+      - name: Save Git submodule cache
+        if: steps.submodule-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .git/modules
+            gow3_pc/gpu/third_party/fsr-vulkan
+            gow3_pc/gpu/third_party/imgui
+            gow3_pc/gpu/third_party/magic_enum
+            gow3_pc/gpu/third_party/miniz
+            gow3_pc/gpu/third_party/xbyak
+            gow3_pc/third_party/LibAtrac9
+          key: ubuntu-26.04-submodules-${{ steps.submodule-revisions.outputs.hash }}
 
       - name: Verify generic Ubuntu 26.04 amd64 environment
         run: |
