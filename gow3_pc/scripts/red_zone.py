@@ -799,7 +799,7 @@ def analyze(image, segments, code_offset, isa_bytes=frozenset(), functions=None,
     builder = Builder(image, code_offset)
     builder.isa_only = isa_only                     # leave the red zone alone, only emulate instructions
     isa_info = builder.isa = dict(enabled=bool(isa_kinds), found=0, kinds={}, orphans=0, unsupported=[],
-                                  errors=0, unpatched=[], outside=[], site_details={})
+                                  errors=0, unpatched=[], outside=[], site_details={}, inline=0)
     padding = padding_slots(image, functions)
     used = set()
     isa_ips = []
@@ -837,7 +837,6 @@ def analyze(image, segments, code_offset, isa_bytes=frozenset(), functions=None,
                 if op is None:                      # not reached by the control-flow walk
                     op = f.ops[ins.ip] = describe(ins, factory)
                     isa_info['orphans'] += 1
-                op.isa = site
                 isa_ips.append(ins.ip)
                 isa_info['found'] += 1
                 isa_info['kinds'][site.kind] = isa_info['kinds'].get(site.kind, 0) + 1
@@ -847,6 +846,17 @@ def analyze(image, segments, code_offset, isa_bytes=frozenset(), functions=None,
                     'bytes': bytes(image[ins.ip:ins.next_ip]).hex(),
                     'instruction': str(ins),
                 }
+                inline = isa_emulation.inline_replacement(site, ins.ip) if isa_only else None
+                if inline is not None:
+                    # The instruction stays in place and keeps its exact length. No trampoline
+                    # or neighbouring instruction is moved, even with unresolved indirect branches.
+                    builder.groups.append((ins.ip, len(builder.code), 0, 0, [
+                        (ins.ip, bytes(image[ins.ip:ins.next_ip]), inline)
+                    ]))
+                    used.update(range(ins.ip, ins.next_ip))
+                    isa_info['inline'] += 1
+                else:
+                    op.isa = site
             plan_function(f, builder, isa_bytes, used, padding, stats)
         except Exception:                           # a function the analysis cannot handle is left alone
             if not sites:
@@ -918,7 +928,8 @@ def isa_summary(builder):
     if not info or not info['enabled']:
         return ''
     kinds = ', '.join(f'{k} {n}' for k, n in sorted(info['kinds'].items()))
-    line = (f"ISA emulation: {info['found']} instructions replaced ({kinds}); "
+    inline = f", {info.get('inline', 0)} in-place" if info.get('inline', 0) else ""
+    line = (f"ISA emulation: {info['found']} instructions replaced ({kinds}{inline}); "
             f"{len(info['unpatched'])} not placed, {len(info['outside'])} outside any function, "
             f"{len(info['unsupported'])} unsupported forms, {info['errors']} functions failed")
     for label in ('unpatched', 'outside', 'unsupported'):
