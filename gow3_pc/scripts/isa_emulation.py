@@ -388,6 +388,23 @@ def emulate(site, at):
         raise Unsupported(site.kind)
     return asm.finish()
 
+def inline_replacement(site, at):
+    """Return an equal-length-or-shorter in-place replacement, padded with NOPs, or None.
+
+    MOVBE r32,m32 is exactly the length of MOV r32,m32 + BSWAP r32. Unlike a trampoline,
+    this remains safe in functions with unresolved indirect branches because no instruction
+    boundary or control-flow target moves. Both replacement instructions leave EFLAGS unchanged.
+    """
+    if site.kind != 'movbe_load' or site.size != 32 or not isinstance(site.rm, Mem):
+        return None
+    asm = Asm(at)
+    asm.mov_load(32, site.reg, site.rm)
+    asm.bswap(32, site.reg)
+    code = asm.finish()
+    if len(code) > site.length:
+        return None
+    return code + b'\\x90' * (site.length - len(code))
+
 
 def _bitscan(a, s):
     n = s.size
