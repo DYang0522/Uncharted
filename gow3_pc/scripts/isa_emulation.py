@@ -403,7 +403,7 @@ def inline_replacement(site, at):
     code = asm.finish()
     if len(code) > site.length:
         return None
-    return code + b'\\x90' * (site.length - len(code))
+    return code + b'\x90' * (site.length - len(code))
 
 
 def _bitscan(a, s):
