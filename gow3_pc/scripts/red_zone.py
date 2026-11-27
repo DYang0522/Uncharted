@@ -525,6 +525,7 @@ class Builder:
         self.code_offset = code_offset
         self.code = bytearray()
         self.groups = []        # (site, stub offset, stub bytes, protected, [(offset, original, new)])
+        self.last_stub_error = None
 
     def stub(self, ops, protect, continuation):
         """Encodes ops (Op list) for the next free address; returns (offset, bytes) or None.
@@ -555,7 +556,8 @@ class Builder:
             if not ops or ops[-1].flow not in TERMINATORS:
                 pending.append(Instruction.create_branch(Code.JMP_REL32_64, continuation))
             flush()
-        except (ValueError, isa_emulation.Unsupported):
+        except (ValueError, isa_emulation.Unsupported) as error:
+            self.last_stub_error = f"{type(error).__name__}: {error}"
             return None
         data = bytes(out)
         start = len(self.code)
@@ -608,8 +610,12 @@ def plan_function(f, builder, isa_bytes, used, padding, stats):
 
     def emit(span, continuation):
         protect = {op.ip for op in span if op.ip in site_ips}
+        builder.last_stub_error = None
         stub = builder.stub(span, protect, continuation)
         if stub is None:
+            if builder.isa_only and protect:
+                builder.isa.setdefault('stub_errors', {})[min(protect)] = (
+                    builder.last_stub_error or "stub encoding failed without a detailed exception")
             return None
         return stub, protect
 
@@ -731,6 +737,16 @@ def plan_function(f, builder, isa_bytes, used, padding, stats):
         if slot is None:
             if neighbours_ok and host_relay(site):
                 continue
+            if builder.isa_only:
+                stub_error = builder.isa.get('stub_errors', {}).get(site.ip)
+                if stub_error:
+                    reason = f"emulation stub could not be encoded: {stub_error}"
+                elif not neighbours_ok:
+                    reason = ("no in-range relay slot; host-relay fallback is disabled because "
+                              "this function has an unresolved indirect branch")
+                else:
+                    reason = "no 5-byte patch span and no in-range relay slot"
+                builder.isa.setdefault('unplaced_reasons', {})[site.ip] = reason
             stats['skipped_unrelocatable'] += 1
             continue
         made = emit([site], site.end)
@@ -783,7 +799,7 @@ def analyze(image, segments, code_offset, isa_bytes=frozenset(), functions=None,
     builder = Builder(image, code_offset)
     builder.isa_only = isa_only                     # leave the red zone alone, only emulate instructions
     isa_info = builder.isa = dict(enabled=bool(isa_kinds), found=0, kinds={}, orphans=0, unsupported=[],
-                                  errors=0, unpatched=[], outside=[])
+                                  errors=0, unpatched=[], outside=[], site_details={})
     padding = padding_slots(image, functions)
     used = set()
     isa_ips = []
@@ -825,6 +841,12 @@ def analyze(image, segments, code_offset, isa_bytes=frozenset(), functions=None,
                 isa_ips.append(ins.ip)
                 isa_info['found'] += 1
                 isa_info['kinds'][site.kind] = isa_info['kinds'].get(site.kind, 0) + 1
+                isa_info['site_details'][ins.ip] = {
+                    'kind': site.kind,
+                    'length': ins.next_ip - ins.ip,
+                    'bytes': bytes(image[ins.ip:ins.next_ip]).hex(),
+                    'instruction': str(ins),
+                }
             plan_function(f, builder, isa_bytes, used, padding, stats)
         except Exception:                           # a function the analysis cannot handle is left alone
             if not sites:
@@ -902,6 +924,17 @@ def isa_summary(builder):
     for label in ('unpatched', 'outside', 'unsupported'):
         if info[label]:
             line += f"\n  {label}: " + ' '.join(f'{ip:#x}' for ip in info[label][:12]) + (' ...' if len(info[label]) > 12 else '')
+    if info['unpatched']:
+        for ip in info['unpatched'][:12]:
+            detail = info.get('site_details', {}).get(ip, {})
+            kind = detail.get('kind', 'unknown')
+            length = detail.get('length', '?')
+            encoding = detail.get('bytes', '?')
+            instruction = detail.get('instruction', '')
+            reason = info.get('unplaced_reasons', {}).get(ip, '')
+            line += f"\n  unplaced detail: {ip:#x} {kind}, {length} bytes [{encoding}] {instruction}"
+            if reason:
+                line += f" — {reason}"
     return line
 
 
