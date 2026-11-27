@@ -1593,9 +1593,10 @@ def run_game(args, game, executable, guest_args, loadexec, app0=None, overlays=(
             rewrite_result = subprocess.run(rewrite_command)
             if rewrite_result.returncode != 0:
                 raise SystemExit(
-                    "Cannot make the Linux guest ISA rewrite table. Install iced-x86 with "
-                    "python3 -m pip install --target gow3_pc/out/pydeps iced-x86==1.21.0 "
-                    "and retry; no game code was started."
+                    f"Cannot make the Linux guest ISA rewrite table (red_zone_table.py exit "
+                    f"{rewrite_result.returncode}); see the ISA emulation diagnostics above. "
+                    "This failure does not by itself mean iced-x86 is missing: a recognised "
+                    "instruction may have been found but could not be relocated. No game code was started."
                 )
             rewrite_table = out / "red-zone.bin"
             isa_skip_cpu_check = not cpu_features.missing_blocking()
