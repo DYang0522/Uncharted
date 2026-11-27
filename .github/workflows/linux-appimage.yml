@@ -166,6 +166,7 @@ jobs:
         run: |
           mkdir -p "$HOME/.local/share"
           bash gow3_pc/build.sh --test
+          python3 gow3_pc/tests/test_isa_emulation.py
 
       - name: Save C/C++ compiler cache
         if: always()
