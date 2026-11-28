@@ -111,49 +111,44 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         .stage = shader_ci,
         .layout = *pipeline_layout,
     };
-    // GOW3 diagnostic: identify the compute shader and descriptor layout immediately before
-    // entering the Vulkan driver. If the driver faults, the flushed "begin" record survives.
+    // GOW3 diagnostic: one compact record for runtime pipeline creation only. Skip archive
+    // warm-up pipelines so tracing a long play session does not flood the normal game log.
     const char* trace_compute_env = std::getenv("GOW3_TRACE_COMPUTE_PIPELINE");
-    const bool trace_compute_pipeline = trace_compute_env && trace_compute_env[0] == '1';
+    const bool trace_compute_pipeline =
+        trace_compute_env && trace_compute_env[0] == '1' && !preloading;
     if (trace_compute_pipeline) {
+        // Encode all image descriptor types/counts on the same line: S = storage, T = sampled.
+        char image_layout[512]{};
+        std::size_t image_layout_size = 0;
+        for (std::size_t i = 0; i < info->images.size(); ++i) {
+            const auto& image = info->images[i];
+            const u32 count = image.NumBindings(*info);
+            const std::size_t remaining = sizeof(image_layout) - image_layout_size;
+            const int written = std::snprintf(
+                image_layout + image_layout_size, remaining, "%s%c%u",
+                i == 0 ? "" : ",", image.is_written ? 'S' : 'T', count);
+            if (written < 0 || static_cast<std::size_t>(written) >= remaining) {
+                image_layout[sizeof(image_layout) - 1] = '\\0';
+                break;
+            }
+            image_layout_size += static_cast<std::size_t>(written);
+        }
+
         std::fprintf(stderr,
-                     "[GOW3_COMPUTE_PIPELINE] begin shader=0x%016llx key=0x%zx "
+                     "[GOW3_COMPUTE_PIPELINE] shader=0x%016llx key=0x%zx "
                      "pgm_base=0x%016llx hw=%u sw=%u buffers=%zu images=%zu samplers=%zu "
-                     "descriptor_bindings=%u push=%u preloading=%u\n",
+                     "bindings=%u push=%u image_layout=[%s]\\n",
                      static_cast<unsigned long long>(info->pgm_hash), compute_key.value,
                      static_cast<unsigned long long>(info->pgm_base),
                      static_cast<unsigned>(info->hw_stage),
                      static_cast<unsigned>(info->sw_stage), info->buffers.size(),
                      info->images.size(), info->samplers.size(), binding,
-                     static_cast<unsigned>(uses_push_descriptors),
-                     static_cast<unsigned>(preloading));
-
-        u32 image_binding = static_cast<u32>(info->buffers.size());
-        for (std::size_t i = 0; i < info->images.size(); ++i) {
-            const auto& image = info->images[i];
-            const u32 count = image.NumBindings(*info);
-            std::fprintf(stderr,
-                         "[GOW3_COMPUTE_PIPELINE] image[%zu] binding=%u kind=%s count=%u "
-                         "depth=%u atomic=%u array=%u r128=%u mip_mode=%u\n",
-                         i, image_binding, image.is_written ? "storage" : "sampled", count,
-                         static_cast<unsigned>(image.is_depth),
-                         static_cast<unsigned>(image.is_atomic),
-                         static_cast<unsigned>(image.is_array),
-                         static_cast<unsigned>(image.is_r128),
-                         static_cast<unsigned>(image.mip_fallback_mode));
-            image_binding += count;
-        }
+                     static_cast<unsigned>(uses_push_descriptors), image_layout);
         std::fflush(stderr);
     }
 
     auto [pipeline_result, pipe] =
         instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
-    if (trace_compute_pipeline) {
-        const auto result_name = vk::to_string(pipeline_result);
-        std::fprintf(stderr, "[GOW3_COMPUTE_PIPELINE] driver-return shader=0x%016llx result=%s\n",
-                     static_cast<unsigned long long>(info->pgm_hash), result_name.c_str());
-        std::fflush(stderr);
-    }
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
