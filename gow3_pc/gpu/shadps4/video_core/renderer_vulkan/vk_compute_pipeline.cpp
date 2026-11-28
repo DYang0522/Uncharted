@@ -128,7 +128,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
                 image_layout + image_layout_size, remaining, "%s%c%u",
                 i == 0 ? "" : ",", image.is_written ? 'S' : 'T', count);
             if (written < 0 || static_cast<std::size_t>(written) >= remaining) {
-                image_layout[sizeof(image_layout) - 1] = '\\0';
+                image_layout[sizeof(image_layout) - 1] = '\0';
                 break;
             }
             image_layout_size += static_cast<std::size_t>(written);
@@ -137,7 +137,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         std::fprintf(stderr,
                      "[GOW3_COMPUTE_PIPELINE] shader=0x%016llx key=0x%zx "
                      "pgm_base=0x%016llx hw=%u sw=%u buffers=%zu images=%zu samplers=%zu "
-                     "bindings=%u push=%u image_layout=[%s]\\n",
+                     "bindings=%u push=%u image_layout=[%s]\n",
                      static_cast<unsigned long long>(info->pgm_hash), compute_key.value,
                      static_cast<unsigned long long>(info->pgm_base),
                      static_cast<unsigned>(info->hw_stage),
