@@ -33,8 +33,9 @@ int runtime_pad_aim_held(void);
 /* gow3 1 Nov 2026: GOW3_MOUSE_TRACE=<file> pad lines (runtime_pad.c sample_mouse, each read). */
 void runtime_mouselook_trace_pad(int direct, float stick_x, float stick_y);
 /* gow3 1 Nov 2026: code patches besides the entry hooks (Uncharted 1's stick reads after the follow
- * camera's turn); probe.c calls it once after the sites, while the image is still writable. */
-void runtime_mouselook_install_patches(uint64_t image_size);
+ * camera's turn); probe.c supplies its near-image executable stub allocator. */
+typedef unsigned char *(*RuntimeMouseLookStubAllocator)(uint64_t image_size);
+void runtime_mouselook_install_patches(uint64_t image_size, RuntimeMouseLookStubAllocator allocate_stub);
 /* U1 1.02 AIM_POST hooks after the two zoom direction stores. */
 void runtime_mouselook_u1_aim_post_main(uint64_t camera);
 void runtime_mouselook_u1_aim_post_zoom(uint64_t camera);
