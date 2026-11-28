@@ -899,7 +899,7 @@ static unsigned build_call_stub(unsigned char *p, void *handler) {
     p[n++] = 0xc3; /* ret */
     return n;
 }
-unsigned char *runtime_mouselook_alloc_stub(uint64_t image_size); /* probe.c */
+
 static int u1_steer_enabled(void) {
     static int enabled = -1;
     if (enabled < 0) enabled = u1_enabled() && steer_enabled();
@@ -981,7 +981,8 @@ static void install_u1_patches(unsigned char *stub) {
     printf("Mouse look: Uncharted 1 follow camera sees mouse turns as steering (stick reads 0xb0219 0xb08e5%s)\n",
            steer ? ", step result 0xb0204" : "; step result patch unavailable");
 }
-void runtime_mouselook_install_patches(uint64_t image_size) {
+void runtime_mouselook_install_patches(uint64_t image_size,
+                                        RuntimeMouseLookStubAllocator allocate_stub) {
     if (!image || !steer_enabled()) return;
     static const unsigned char u1_step_result[] = {0x0f, 0xb6, 0xd0, 0x4c, 0x89, 0xef};
     static const unsigned char u2_store[] = {0x88, 0x83, 0x71, 0x02, 0x00, 0x00};
@@ -990,7 +991,11 @@ void runtime_mouselook_install_patches(uint64_t image_size) {
     const int u2 = !u1 && !memcmp(image + 0x430a96, u2_store, sizeof(u2_store));
     const int u3 = !u1 && !u2 && !memcmp(image + 0x4ec5c3, u3_store, sizeof(u3_store));
     if (!u1 && !u2 && !u3) return;
-    unsigned char *stub = runtime_mouselook_alloc_stub(image_size);
+    if (!allocate_stub) {
+        puts("Mouse look: steering patches unavailable (no stub allocator)");
+        return;
+    }
+    unsigned char *stub = allocate_stub(image_size);
     if (!stub) {
         puts("Mouse look: steering patches unavailable (no stub page near the image)");
         return;
