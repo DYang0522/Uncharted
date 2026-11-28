@@ -119,7 +119,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         std::fprintf(stderr,
                      "[GOW3_COMPUTE_PIPELINE] begin shader=0x%016llx key=0x%zx "
                      "pgm_base=0x%016llx hw=%u sw=%u buffers=%zu images=%zu samplers=%zu "
-                     "descriptor_bindings=%u push=%u preloading=%u\\n",
+                     "descriptor_bindings=%u push=%u preloading=%u\n",
                      static_cast<unsigned long long>(info->pgm_hash), compute_key.value,
                      static_cast<unsigned long long>(info->pgm_base),
                      static_cast<unsigned>(info->hw_stage),
@@ -134,7 +134,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
             const u32 count = image.NumBindings(*info);
             std::fprintf(stderr,
                          "[GOW3_COMPUTE_PIPELINE] image[%zu] binding=%u kind=%s count=%u "
-                         "depth=%u atomic=%u array=%u r128=%u mip_mode=%u\\n",
+                         "depth=%u atomic=%u array=%u r128=%u mip_mode=%u\n",
                          i, image_binding, image.is_written ? "storage" : "sampled", count,
                          static_cast<unsigned>(image.is_depth),
                          static_cast<unsigned>(image.is_atomic),
@@ -150,7 +150,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
     if (trace_compute_pipeline) {
         const auto result_name = vk::to_string(pipeline_result);
-        std::fprintf(stderr, "[GOW3_COMPUTE_PIPELINE] driver-return shader=0x%016llx result=%s\\n",
+        std::fprintf(stderr, "[GOW3_COMPUTE_PIPELINE] driver-return shader=0x%016llx result=%s\n",
                      static_cast<unsigned long long>(info->pgm_hash), result_name.c_str());
         std::fflush(stderr);
     }
