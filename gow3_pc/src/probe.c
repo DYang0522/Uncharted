@@ -887,7 +887,7 @@ static unsigned char *allocate_near_image(uint64_t size) {
 
 /* The mouse steering hooks need their own executable rel32 stub page. Reuse the same
  * near-image allocator as the camera entry hooks, without enabling runtime_isa's fast path. */
-unsigned char *runtime_mouselook_alloc_stub(uint64_t image_size) {
+static unsigned char *runtime_mouselook_alloc_stub(uint64_t image_size) {
     unsigned char *stub = allocate_near_image(image_size);
     if (!stub) return NULL;
     protect(stub, page_size, 7); /* executable, readable and writable while the stubs are emitted */
@@ -1200,7 +1200,7 @@ static void install_mouse_look(Segment *segments, uint64_t count, uint64_t size)
     install_u1_aim_release_hook(segments, count, size, &stubs, &used);
     if (stubs) protect(stubs, page_size, 5);
     if (!installed) puts("Mouse look: no known camera code in this executable (mouse acts as the right stick)");
-    else runtime_mouselook_install_patches(size); /* gow3 1 Nov 2026 */
+    else runtime_mouselook_install_patches(size, runtime_mouselook_alloc_stub); /* gow3 1 Nov 2026 */
 }
 /* Offset of the only match of `pattern` (hex, "??" = any byte) in the executable segments, -1 when it
  * occurs not once. */
